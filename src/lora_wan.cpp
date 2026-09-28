@@ -45,6 +45,12 @@ uint32_t lora_wait_ms()
     return ready ? node.timeUntilUplink() : 0;
 }
 
+void lora_forget_rtc_session()
+{
+    LoRaStorage::clearRtcSession();
+    Serial.println("[LoRa] User power cycle: RTC session cleared; OTAA join required");
+}
+
 bool setup_lora_wan_app()
 {
     ready = false;

@@ -62,6 +62,10 @@ start immediately once their three-second threshold is reached.
 The initial button wake counts as the first SOS click when it has already been
 released by the time button monitoring starts. Soft-off disables timer and fall wakeups and waits only for GPIO0. It is deep
 sleep, not a physical battery disconnect; always-powered circuits still draw current.
+After a valid power-on hold, the tracker deliberately discards its RTC LoRaWAN
+session and performs a fresh OTAA join. This gives the user a physical recovery
+path when the network session needs to be re-established; durable DevNonce data
+is retained in NVS.
 Hold time starts when firmware can read the button after wake, so allow a little
 extra time for boot. Holding GPIO0 during reset/power connection can enter the
 ESP32 bootloader instead. Reset/power loss clears the RTC soft-off state.
@@ -186,8 +190,9 @@ across deep sleep. Regular uplinks, including debug uplinks, do not write NVS.
 
 - **DevNonce reservation**: Before transmitting a Join-Request, the next DevNonce is committed
   to NVS, preventing DevNonce reuse per LoRaWAN 1.0.4 specifications.
-- **Session restore**: After deep sleep, the joined session is restored from RTC without
-  transmitting another Join-Request, preserving battery life and gateway bandwidth.
+- **Session restore**: After a timed/event deep-sleep wake, the joined session is restored
+  from RTC without transmitting another Join-Request, preserving battery life and gateway
+  bandwidth. A user soft-off followed by a valid power-on hold intentionally forces a new join.
 - **After a successful join**: Updated nonce state is saved to NVS. A successful
   join therefore makes two NVS writes; a failed join normally makes one.
 - **Power loss or reset**: Power-on, software resets and watchdog resets require a

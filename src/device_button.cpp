@@ -10,6 +10,7 @@ namespace {
 RTC_DATA_ATTR bool poweredOff = false;
 RTC_DATA_ATTR bool pendingSos = false;
 RTC_DATA_ATTR bool pendingOta = false;
+bool startedFromOff = false;
 portMUX_TYPE lock = portMUX_INITIALIZER_UNLOCKED;
 bool held = false;
 bool pendingOff = false;
@@ -123,6 +124,7 @@ void begin()
         }
         if (classify(true, uint32_t(releasedAt - start)) != Action::PowerOn) sleepOff();
         poweredOff = false;
+        startedFromOff = true;
         Serial.println("[POWER] On");
         AudioFeedback::playAndWait(AudioFeedback::Event::PowerOn);
     }
@@ -180,5 +182,9 @@ void acknowledgeOta()
     portENTER_CRITICAL(&lock);
     pendingOta = false;
     portEXIT_CRITICAL(&lock);
+}
+bool startedFromPowerOff()
+{
+    return startedFromOff;
 }
 }

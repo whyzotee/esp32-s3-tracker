@@ -13,6 +13,8 @@ public:
     bool reserveUplink(LoRaWANNode &node);
     bool saveUplink(LoRaWANNode &node);
     static uint32_t nextCounter(LoRaWANNode &node);
+    // Drop only the RTC session. Durable DevNonce state in NVS is retained.
+    static void clearRtcSession();
 
 private:
     // All byte fields: deterministic layout, no compiler padding.

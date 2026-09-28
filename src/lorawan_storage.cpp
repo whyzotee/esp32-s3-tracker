@@ -47,6 +47,11 @@ bool LoRaStorage::commit(Record &record)
     return true;
 }
 
+void LoRaStorage::clearRtcSession()
+{
+    rtc = Record{};
+}
+
 bool LoRaStorage::persistNonces(const Record &record)
 {
     // Keep the legacy layout for safe migration, but never persist session keys

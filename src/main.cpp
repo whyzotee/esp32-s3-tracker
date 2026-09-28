@@ -5,6 +5,7 @@
 #include <deep_sleep.h>
 #include <fall_detection.h>
 #include <gnss.h>
+#include <lora_wan.h>
 #include <tracker_app.h>
 #include <device_button.h>
 #include <ota_manager.h>
@@ -23,6 +24,7 @@ void setup()
     Board::begin();
     AudioFeedback::begin();
     DeviceButton::begin();
+    if (DeviceButton::startedFromPowerOff()) lora_forget_rtc_session();
     if (DeviceButton::otaPending()) OtaManager::run(AppConfig::reportIntervalMs);
 
     // Wait up to 3 seconds for USB CDC Serial monitor to connect
