@@ -1,4 +1,4 @@
-# คู่มือผู้ใช้และผู้พัฒนา Firmware Tracker
+# Tracker Firmware
 
 เอกสารนี้จัดทำจากการอ่านโค้ดใน `src/`, `include/` และค่าการ build ใน
 `platformio.ini` โดยตรง ไม่อ้างพฤติกรรมจากเอกสาร Markdown เดิม Firmware
@@ -7,9 +7,7 @@
 > ห้ามเผยแพร่ไฟล์ `include/lorawan_credentials.h` หรือค่า JoinEUI, DevEUI และ
 > AppKey เพราะเป็นข้อมูลสำหรับเข้าระบบ LoRaWAN
 
-## 1. Source code
-
-### ภาพรวมการทำงาน
+## 1. ภาพรวมการทำงาน
 
 เมื่อบอร์ดตื่นจากการเปิดเครื่อง, timer, ปุ่ม หรือ ADXL362 firmware จะทำงานเป็น
 หนึ่งรอบดังนี้
@@ -119,9 +117,11 @@ flowchart TD
 หมายเหตุ: `sendReceive=0` หลัง uplink ไม่ได้หมายถึง gateway รับข้อมูลแล้ว
 แต่หมายถึงไม่มี downlink ใน receive window ของ Class A
 
-### โครงสร้างโฟลเดอร์
+## 2. Source Code
 
-| ตำแหน่ง | หน้าที่ |
+### โครงสร้าง Source Code และคำอธิบายแต่ละส่วน
+
+| ไฟล์ | คำอธิบาย |
 | --- | --- |
 | `src/main.cpp` | จุดเริ่มต้น ตั้งค่า Serial, Debug และเริ่มอุปกรณ์แต่ละส่วน |
 | `src/tracker_app.cpp` | ควบคุมหนึ่งรอบของ tracker: อ่านข้อมูล, ส่ง LoRaWAN, จัดการเหตุการณ์, เลือกเวลานอน |
@@ -141,10 +141,13 @@ flowchart TD
 | `include/` | header, pin map, ค่าคอนฟิก และตัวอย่าง credential |
 | `test/` | host-side regression tests สำหรับ session, payload, ปุ่ม, fall และ power mode |
 
+## 3. การตั้งค่าและความสามารถของ Firmware
+
 ### ไฟล์คอนฟิกที่ปรับบ่อย
 
 | ไฟล์ | ค่าที่เกี่ยวข้อง | คำอธิบาย |
 | --- | --- | --- |
+| `include/lorawan_credentials.h` | `joinEui`, `devEui`, `appKey` | ข้อมูล OTAA ของอุปกรณ์ ใช้กับ `node.beginOTAA()`; สร้างจากไฟล์ example และไม่ควร commit หรือเผยแพร่ |
 | `src/main.cpp` | `LORA_DEBUG` | `true` = เดินจำลองและส่งตาม Debug interval; `false` = ใช้ GNSS จริง |
 | `src/main.cpp` | `LORA_DEBUG_INTERVAL_MS` | รอบ deep sleep ใน Debug mode; ค่าเริ่มต้น 15,000 ms |
 | `include/app_config.h` | `reportIntervalMs` | รอบรายงานปกติ; โค้ดปัจจุบัน 1 นาที |
@@ -182,7 +185,7 @@ Session ปกติอยู่ใน RTC memory จึงตื่นจาก
 ทุกครั้ง เพื่อประหยัดแบตเตอรี่ แต่การ **ปิดด้วยปุ่มแล้วเปิดด้วยปุ่ม** จะล้างเฉพาะ
 RTC session และทำ OTAA Join ใหม่ ส่วน DevNonce ใน NVS จะไม่ถูกล้าง
 
-### การใช้งานปุ่มและเสียง
+### การใช้งานปุ่ม
 
 | สถานะ | การกดปุ่ม S2 | ผลลัพธ์ |
 | --- | --- | --- |
@@ -191,12 +194,29 @@ RTC session และทำ OTAA Join ใหม่ ส่วน DevNonce ใน 
 | เครื่องเปิด | กดสั้น 2 ครั้ง แล้วกดครั้งที่ 3 ค้าง 3 วินาที | เข้า OTA mode ทันที |
 | เครื่องปิด | กดค้าง 1–4 วินาที แล้วปล่อย | เปิดเครื่องและ OTAA Join ใหม่ |
 
-เสียง buzzer จะแตกต่างกันสำหรับเปิด/ปิด, SOS, fall, กำลัง OTAA Join, Join สำเร็จ,
-OTA mode และก่อน deep sleep
+### เสียงและไฟแสดงสถานะ
 
-## 2. วิธีการโปรแกรมอุปกรณ์
+Firmware ควบคุม buzzer ที่ GPIO4 ด้วย LEDC และ LED2/CPU_LED ที่ GPIO40
+โดยเสียงทำงานผ่าน background task เพื่อไม่ให้ขัดขวาง GNSS หรือ LoRaWAN
+ยกเว้นเสียงปิดเครื่องที่ firmware รอให้เล่นจบก่อนเข้าสู่ deep sleep
 
-### 2.1 เตรียมเครื่องมือ
+| เหตุการณ์ | เสียงจาก Buzzer (GPIO4) | LED2 / CPU_LED (GPIO40) |
+| --- | --- | --- |
+| เปิดเครื่องด้วยปุ่ม | เสียงสูงขึ้น 3 โน้ต | ติดค้างเมื่อ MCU ทำงาน |
+| ปิดเครื่องด้วยปุ่ม | เสียงต่ำลง 3 โน้ต | ดับก่อน deep sleep และ hold ระดับ LOW |
+| SOS | เสียงสูง 3 ครั้ง | ติดค้างระหว่างทำงาน |
+| Fall detected | เสียงสูงเร่งด่วน 4 ครั้ง โดยครั้งสุดท้ายยาวกว่า | ติดค้างระหว่างทำงาน |
+| กำลัง OTAA Join | beep สั้น 2 ครั้ง แล้วเว้น 2 วินาที วนซ้ำจน Join จบ | ติดค้างระหว่างทำงาน |
+| OTAA Join สำเร็จ หรือกู้ session สำเร็จ | เสียงสูงขึ้น 3 โน้ต | ติดค้างระหว่างทำงาน |
+| เข้า OTA mode | สลับเสียงต่ำ/สูง 4 ครั้ง แล้วเสียงสูงยาว 1 ครั้ง | กระพริบทุก 500 ms ระหว่าง OTA AP ทำงาน |
+| เข้า timed deep sleep | เสียงต่ำ 1 ครั้ง | ดับก่อน sleep และ hold ระดับ LOW |
+
+สถานะ LED นี้เป็นสถานะ MCU/OTA ไม่ได้บ่งบอกว่า Gateway ได้รับ uplink แล้ว
+และเสียงทุกแบบจะถูกหยุดก่อนเข้าสู่ deep sleep
+
+## 4. วิธีการโปรแกรมอุปกรณ์
+
+### 4.1 เตรียมเครื่องมือ
 
 1. ติดตั้ง [VS Code](https://code.visualstudio.com/) และส่วนขยาย PlatformIO IDE
 2. เปิดโฟลเดอร์ project นี้ใน VS Code
@@ -206,7 +226,7 @@ OTA mode และก่อน deep sleep
 โปรเจกต์กำหนด environment ชื่อ `heltec_wifi_lora_32_V3` ใน `platformio.ini`
 และใช้ Arduino framework โดย GPIO ที่ firmware ใช้กำหนดไว้ใน `include/board_pins.h`
 
-### 2.2 ตั้งค่า LoRaWAN credential
+### 4.2 ตั้งค่า LoRaWAN credential
 
 คัดลอกไฟล์ตัวอย่างก่อน build ครั้งแรก:
 
@@ -218,7 +238,7 @@ cp include/lorawan_credentials.example.h include/lorawan_credentials.h
 ระบบ LoRaWAN ออกให้ โค้ดเรียก `node.beginOTAA()` ด้วยค่าเหล่านี้โดยตรง
 ห้ามนำ AppSKey ของ ABP มาใส่แทน AppKey
 
-### 2.3 Build
+### 4.3 Build
 
 ใน PlatformIO terminal ให้รัน:
 
@@ -232,7 +252,7 @@ pio run -e heltec_wifi_lora_32_V3
 .pio/build/heltec_wifi_lora_32_V3/firmware.bin
 ```
 
-### 2.4 Upload ผ่าน USB
+### 4.4 Upload ผ่าน USB
 
 ตรวจพอร์ตก่อน:
 
@@ -253,12 +273,12 @@ pio run -e heltec_wifi_lora_32_V3 -t upload --upload-port PORT
 วงจร/adapter ที่ใช้อยู่ แล้วตรวจพอร์ตด้วย `pio device list` ก่อนสั่ง upload ใหม่
 รายละเอียดการต่อสายไม่ได้อยู่ใน source code จึงไม่สรุปเป็นข้อเท็จจริงในคู่มือนี้
 
-### 2.5 Update แบบ OTA ผ่าน Wi-Fi
+### 4.5 Update แบบ OTA ผ่าน Wi-Fi
 
 1. ขณะเครื่องเปิด กด S2 สั้น 2 ครั้ง
 2. กด S2 ครั้งที่ 3 ค้าง 3 วินาที; ไม่จำเป็นต้องปล่อย
 3. ดู Serial Monitor จะพบชื่อ AP เช่น `Tracker-OTA-C13DE8`
-4. เชื่อม Wi-Fi นั้น (เป็น open network)
+4. เชื่อม Wi-Fi นั้นด้วยรหัสผ่านเริ่มต้น `TrackerOTA123` (เปลี่ยนได้ที่ `OtaConfig::apPassword` ใน `include/ota_config.h` เป็น ASCII 8–63 ตัวอักษร แล้ว build และ upload ใหม่)
 5. เปิด `http://192.168.4.1`
 6. เลือก `.pio/build/heltec_wifi_lora_32_V3/firmware.bin` แล้วกด Upload
 7. รอข้อความสำเร็จ; บอร์ดจะ restart เข้า firmware ใหม่เอง
@@ -267,9 +287,9 @@ OTA จะปิด radio/GNSS ชั่วคราว และหมดเว
 ผู้ที่เชื่อม AP ได้สามารถ upload firmware ได้ ดังนั้นใช้งานในสถานที่ปลอดภัยเท่านั้น
 ใช้แหล่งจ่ายไฟนิ่งระหว่าง OTA ห้ามตัดไฟระหว่าง upload
 
-## 3. การ Debug
+## 5. การ Debug
 
-### 3.1 เปิด Debug mode
+### 5.1 เปิด Debug mode
 
 แก้ `src/main.cpp`:
 
@@ -287,7 +307,7 @@ build และ upload ใหม่ Debug mode จะ:
 
 หลังทดสอบต้องเปลี่ยน `LORA_DEBUG = false` แล้ว build/upload ใหม่เสมอ
 
-### 3.2 เปิด Serial Monitor
+### 5.2 เปิด Serial Monitor
 
 ```bash
 pio device monitor --port PORT --baud 115200
@@ -308,7 +328,7 @@ pio device monitor --port PORT --baud 115200
 | `[WAKE] Timer/Button/Fall sensor` | สาเหตุที่บอร์ดตื่น |
 | `[BAT] ...` | แรงดันและเปอร์เซ็นต์แบตที่อ่านได้ |
 
-### 3.3 ตรวจ LoRaWAN
+### 5.3 ตรวจ LoRaWAN
 
 โค้ดส่ง uplink แบบ unconfirmed (`sendReceive(..., false, ...)`) ดังนั้น
 `[LoRa] TX ...` และ `sendReceive=0` ยืนยันเพียงว่า firmware จบการส่งโดยไม่มี
@@ -318,7 +338,7 @@ downlink ไม่ได้ยืนยันว่า network server ได้�
 การตั้งค่า network ให้ตรงกับ AS923/923.2 MHz และ coverage ของ gateway
 ไม่ควรล้าง NVS เพื่อแก้โดยไม่มีการประสานกับ LoRaWAN server เพราะ DevNonce ต้องไม่ซ้ำ
 
-### 3.4 Debug GNSS
+### 5.4 Debug GNSS
 
 สำหรับดู NMEA ดิบ ให้ตั้ง:
 
@@ -330,7 +350,7 @@ constexpr bool GNSS_DEBUG = true;
 ข้อความ `Valid NMEA received but no position fix` หมายถึง UART และ GNSS ทำงาน
 แล้ว แต่ยังจับดาวเทียมไม่สำเร็จ ไม่ได้หมายถึง firmware ส่งพิกัดผิด
 
-### 3.5 ทดสอบ fall detection อย่างปลอดภัย
+### 5.5 ทดสอบ fall detection อย่างปลอดภัย
 
 - วาง/ปล่อยอุปกรณ์ลงบนวัสดุนุ่มหรือ padded fixture เท่านั้น
 - ห้ามทดสอบโดยปล่อยอุปกรณ์ใส่คนหรือพื้นแข็ง
@@ -338,7 +358,7 @@ constexpr bool GNSS_DEBUG = true;
 - เหตุการณ์นี้เป็น **suspected fall/free-fall** ไม่ใช่ human-fall classifier แบบสมบูรณ์
 - เมื่อ deep sleep, INT1 ของ ADXL362 สามารถปลุก MCU ได้ และ firmware จะส่ง `status=2`
 
-### 3.6 Low Power Mode จาก downlink
+### 5.6 Low Power Mode จาก downlink
 
 ส่ง downlink FPort `10` จาก LoRaWAN network server:
 
