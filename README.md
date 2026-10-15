@@ -237,6 +237,16 @@ version and battery telemetry. ChirpStack's envelope `time` is the authoritative
 event timestamp.
 Latitude and longitude are little-endian float32.
 
+Low battery is reported in flags bit 5 (`0x20`) without changing the 15-byte
+payload or Normal/SOS/Fall event codes. It enters at <=15% and clears at >=20%,
+configured in `include/app_config.h`. State is retained in RTC across deep sleep,
+not in NVS. An invalid ADC reading preserves the internal state but reports
+`low_battery: null`; it must not be treated as battery recovery. Battery percentage
+is a voltage-based estimate. Low battery does not change reporting intervals,
+play an alarm, or power off the tracker. Applications should alert on transitions
+from a valid non-low reading to a valid low reading (or the first valid low reading).
+Update the server decoder below to expose this field.
+
 ## Payload decoder (TTN / The Things Stack)
 
 Copy the JavaScript below into the device's **Payload formatters → Uplink** page.
@@ -306,7 +316,8 @@ function decodeUplink(input) {
                 gps_fresh: !!(flags & 1),
                 low_power_mode: !!(flags & 2),
                 debug_simulation: !!(flags & 4),
-                battery_valid: !!(flags & 16)
+                battery_valid: !!(flags & 16),
+                low_battery: (flags & 16) ? !!(flags & 32) : null
             }
         },
         warnings: warnings,
@@ -318,7 +329,7 @@ function decodeUplink(input) {
 Test with FPort `2` and this hexadecimal payload:
 
 ```text
-02000060410000C942000100740E0F
+02000060410000C942300103740E0F
 ```
 
 Expected `data` output:
@@ -331,12 +342,13 @@ Expected `data` output:
   "longitude": 100.5,
   "battery_mv": 3700,
   "battery_percent": 15,
-  "firmware_version": "1.2",
+  "firmware_version": "1.3",
   "flags": {
     "gps_fresh": false,
     "low_power_mode": false,
     "debug_simulation": false,
-    "battery_valid": true
+    "battery_valid": true,
+    "low_battery": true
   }
 }
 ```

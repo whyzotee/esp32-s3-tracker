@@ -94,6 +94,7 @@ namespace TrackerApp {
     sample.batteryMv = battery.millivolts;
     sample.batteryPercent = battery.percent;
     if (battery.valid) sample.flags |= TelemetryFlags::batteryValid;
+    if (battery.valid && battery.low) sample.flags |= TelemetryFlags::lowBattery;
     // Log the final sample only. A button/fall event can occur while a normal
     // GPS sample is being acquired and replace it with an urgent packet.
     Serial.printf("[TX] LAT: %.6f, LON: %.6f, STATUS: %u\n",

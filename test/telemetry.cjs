@@ -33,6 +33,9 @@ int main() {
                                 116,14,15};
     assert(sizeof(payload) == sizeof(expected));
     assert(memcmp(payload, expected, sizeof(expected)) == 0);
+    s.flags = TelemetryFlags::batteryValid | TelemetryFlags::lowBattery;
+    encode_telemetry(s, payload);
+    assert(sizeof(payload)==15 && payload[9]==0x30 && payload[0]==2);
     auto a = walking_sample(0);
     assert(fabs(a.lat - 13.7563) < 0.00001);
     clockMs = 15000;

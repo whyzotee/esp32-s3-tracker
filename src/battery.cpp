@@ -4,6 +4,7 @@
 #include <board_pins.h>
 
 namespace {
+RTC_DATA_ATTR bool lowBattery = false;
 constexpr uint8_t sampleCount = 16;
 constexpr uint16_t minimumValidMv = 3000;
 constexpr uint16_t maximumValidMv = 4400;
@@ -70,8 +71,11 @@ BatteryReading read()
     result.millivolts = static_cast<uint16_t>(batteryMv);
     result.percent = percentage(result.millivolts);
     result.valid = true;
+    lowBattery = Battery::classifyLow(lowBattery, result.percent, result.valid);
+    result.low = lowBattery;
     Serial.printf("[BAT] %u mV (%u%%), ADC=%lu mV\n", result.millivolts,
                   result.percent, static_cast<unsigned long>(adcMv));
+    Serial.printf("[BAT] Low Battery: %s\n", result.low ? "ON" : "OFF");
     return result;
 }
 }

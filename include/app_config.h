@@ -16,6 +16,8 @@ constexpr double gpsMaxTrackingSpeedMps = 15.0;
 constexpr double gpsJumpToleranceM = 20.0;
 constexpr uint32_t batteryTopResistorOhms = 750000;
 constexpr uint32_t batteryBottomResistorOhms = 360000;
+constexpr uint8_t lowBatteryEnterPercent = 15;
+constexpr uint8_t lowBatteryExitPercent = 20;
 constexpr uint8_t uplinkPort = 2;
 constexpr uint8_t uplinkDataRate = 2; // SF10
 }
