@@ -7,6 +7,7 @@
 #include <fall_detection.h>
 #include <gnss.h>
 #include <lora_wan.h>
+#include <power_mode.h>
 #include <esp_sleep.h>
 #include <driver/rtc_io.h>
 
@@ -39,6 +40,9 @@ void logWakeReason()
     case ESP_SLEEP_WAKEUP_TIMER: Serial.println("[WAKE] Timer"); break;
     default: Serial.println("[WAKE] Power-on or reset"); break;
     }
+    Serial.printf("[WAKE] Low Power: %s; configured report sleep: %lu ms\n",
+                  PowerMode::enabled() ? "ON" : "OFF",
+                  static_cast<unsigned long>(PowerMode::reportInterval()));
 }
 
 [[noreturn]] void timed(uint32_t durationMs)

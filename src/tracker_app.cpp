@@ -35,7 +35,16 @@ uint32_t reportInterval()
 
 void handleDownlink(const LoRaResult &result)
 {
-    if (result.code <= 0 || result.downlinkLength == 0) return;
+    if (result.code <= 0) return;
+    Serial.printf("[APP] Downlink: port=%u bytes=%u payload(hex)=",
+                  result.downlinkPort, unsigned(result.downlinkLength));
+    for (size_t i = 0; i < result.downlinkLength; ++i)
+        Serial.printf("%s%02X", i == 0 ? "" : " ", result.downlink[i]);
+    Serial.println();
+    if (result.downlinkLength == 0) {
+        Serial.println("[APP] No application payload; no Low Power command applied");
+        return;
+    }
     if (PowerMode::handleDownlink(result.downlinkPort, result.downlink, result.downlinkLength)) {
         Serial.printf("[APP] Low Power %s: interval %lu ms (RTC only)\n",
                       PowerMode::enabled() ? "enabled" : "disabled",
