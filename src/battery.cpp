@@ -32,6 +32,13 @@ uint8_t percentage(uint16_t millivolts)
 }
 
 namespace Battery {
+BatteryReading bootReading()
+{
+    // Ordinary RAM is reset after deep sleep, so every wake gets a new reading.
+    static const BatteryReading reading = read();
+    return reading;
+}
+
 BatteryReading read()
 {
     // Arduino-ESP32 3.x registers the pin as an ADC channel on its first

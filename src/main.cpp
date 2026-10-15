@@ -10,6 +10,7 @@
 #include <device_button.h>
 #include <ota_manager.h>
 #include <app_config.h>
+#include <battery.h>
 
 // Check the configuration of the prebuilt framework, not a build-flag override.
 static_assert(CONFIG_ESP_IPC_TASK_STACK_SIZE >= 2048,
@@ -44,6 +45,7 @@ void setup()
     Serial.printf("LoRa debug: %s\n", LORA_DEBUG ? "ON (real deep sleep)" : "OFF");
     DebugMode::begin(LORA_DEBUG, LORA_DEBUG_INTERVAL_MS);
     DeepSleep::logWakeReason();
+    Battery::bootReading();
     setup_fall_detection(LORA_DEBUG);
     if (!LORA_DEBUG) {
         setup_gnss(GNSS_DEBUG);

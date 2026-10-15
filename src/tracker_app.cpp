@@ -90,7 +90,7 @@ namespace TrackerApp {
 
     if (PowerMode::enabled()) sample.flags |= TelemetryFlags::lowPowerMode;
     if (debug) sample.flags |= TelemetryFlags::debugSimulation;
-    const BatteryReading battery = Battery::read();
+    const BatteryReading battery = Battery::bootReading();
     sample.batteryMv = battery.millivolts;
     sample.batteryPercent = battery.percent;
     if (battery.valid) sample.flags |= TelemetryFlags::batteryValid;

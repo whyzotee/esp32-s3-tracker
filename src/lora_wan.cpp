@@ -4,6 +4,7 @@
 #include <audio_feedback.h>
 #include <app_config.h>
 #include <board_pins.h>
+#include <battery.h>
 #include <lora_wan.h>
 #include <lorawan_storage.h>
 
@@ -122,6 +123,15 @@ bool setup_lora_wan_app()
             return false;
         }
     }
+
+    // DevStatusAns uses the LoRaWAN battery scale, not percent:
+    // 1 = empty, 254 = full, 255 = unavailable (0 means external power).
+    // Refresh after activation/restoration so every wake answers with its reading.
+    const BatteryReading battery = Battery::bootReading();
+    const uint8_t batteryLevel = battery.valid
+        ? static_cast<uint8_t>(1 + (uint32_t(battery.percent) * 253 + 50) / 100)
+        : 255;
+    node.setDeviceStatus(batteryLevel);
 
     node.setADR(false);
     // Allow the 15-byte SF10 uplink where local regulations permit no dwell limit.

@@ -10,4 +10,6 @@ struct BatteryReading {
 
 namespace Battery {
 BatteryReading read();
+// Sample/log once per boot; reuse the wake-time measurement for telemetry.
+BatteryReading bootReading();
 }
