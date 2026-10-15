@@ -9,6 +9,10 @@ constexpr uint32_t retryInitialMs = 60 * 1000;
 constexpr uint32_t eventRetryMs = 15 * 1000;
 constexpr uint32_t firstGpsTimeoutMs = 120 * 1000;
 constexpr uint32_t gpsTimeoutMs = 30 * 1000;
+// Stop feeding the hardware Task WDT after this tracking budget; its original
+// timeout adds up to another 5 seconds before recovery. No global WDT changes.
+// Must cover GNSS + LoRaWAN join/TX/RX.
+constexpr uint32_t trackingWatchdogMs = 5 * 60 * 1000;
 constexpr uint8_t gpsMinSatellites = 6;
 constexpr uint16_t gpsMaxHdopHundredths = 200; // HDOP <= 2.00, not an accuracy in metres.
 constexpr uint8_t gpsRequiredFixes = 3; // Distinct one-second GGA epochs.
@@ -30,6 +34,9 @@ constexpr uint8_t minor = 3;
 }
 
 namespace TrackerApp {
+// Arm once per wake, not periodically from loops. Disarm for sleep/OTA.
+void beginWatchdog();
+void endWatchdog();
 // One wake cycle: acquire telemetry, exchange LoRaWAN data, then sleep.
 [[noreturn]] void runCycle();
 }

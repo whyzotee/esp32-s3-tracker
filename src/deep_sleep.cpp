@@ -30,6 +30,7 @@ void armButton()
     AudioFeedback::playAndWait(AudioFeedback::Event::DeepSleep);
     Board::prepareSleep();
     Serial.flush();
+    TrackerApp::endWatchdog();
     esp_deep_sleep_start();
     while (true) delay(1000);
 }

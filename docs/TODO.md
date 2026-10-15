@@ -72,9 +72,11 @@
 | 62 | Recovery | GNSS Failure | ปิดบังสัญญาณดาวเทียม | ระบบไม่ค้างและกลับสู่รอบการทำงานได้ | มีแล้ว — ตรวจ Timeout/Cached Position และไม่มี gps_fresh เมื่อไม่ผ่านเกณฑ์ | ☐ |
 | 63 | Recovery | LoRaWAN Join Failure | ปิด Gateway | ระบบ Timeout/Retry โดยไม่ค้าง | มีแล้ว — ตรวจ Join Timeout/Retry หลังหลับ ไม่สับสนกับ Unconfirmed TX | ☐ |
 | 64 | Recovery | Sensor Failure | ตัด/จำลอง Sensor Error | ระบบจัดการ Error โดยไม่ทำให้ MCU ค้าง | มีข้อจำกัด — ตรวจ ID/Readback และปิด Fall Wake เมื่อ Init ไม่ผ่าน รอทดสอบ Fault จริงรวมเสียระหว่างทำงาน | ☐ |
-| 65 | Recovery | Watchdog / Unexpected Reset | จำลอง Reset | ระบบสามารถกลับมาทำงานได้ | มีข้อจำกัด — มีเส้นทาง Boot แต่ยังไม่ยืนยันทุก Fault ต้องตรวจ Nonce/Session/Pending Event และข้อมูล RTC ที่สูญหาย | ☐ |
+| 65 | Recovery | Watchdog / Unexpected Reset | จำลอง Reset | ระบบสามารถกลับมาทำงานได้ | มีแล้ว — ใช้ Hardware Task WDT เดิม 5 วินาที เพิ่ม user ของ Tracking feed ทุก 1 วินาทีเฉพาะ 5 นาทีแรก เกินเวลาหรือ heartbeat ค้างให้ Hardware WDT ทำงาน ถอดก่อน Sleep/OTA; รอทดสอบค้างจริง/Reset/RTC และเวลาสูงสุดของวิทยุ | ☐ |
 
 ## งาน Implement ต่อเนื่องจาก Checklist
+
+- [x] **ข้อ 65 — Tracking Watchdog ฝั่ง Firmware:** ใช้ Hardware-backed ESP32 Task WDT เพิ่ม user `tracker-cycle` ไม่เปลี่ยน timeout เดิม 5 วินาที/Idle Tasks/Interrupt WDT ให้ esp_timer feed user ทุก 1 วินาทีเฉพาะในงบ `AppConfig::trackingWatchdogMs` เริ่มต้น 5 นาที หลังหมดงบหยุด feed ให้ Hardware WDT Panic/Reboot ภายในประมาณอีก 5 วินาที ถ้า Timer Task ค้างก็หยุด feed เช่นกัน ไม่เรียก esp_restart จาก timer ไม่สร้าง Task ใหม่ ถอด timer/user ก่อน Sleep/Power Off/OTA มี Host Test แต่ต้องทดสอบค้างจริงและ GNSS/Join/Confirmed Retry ก่อนติ๊กผ่าน
 
 อ้างอิงเลขแถวด้านบนเพื่อเทียบกับ Sheets โดยตรง รายการไม่จำเป็นต้องทำทั้งหมด ให้ตัดสินใจเรื่องขอบเขตก่อน
 

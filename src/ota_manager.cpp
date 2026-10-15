@@ -13,6 +13,7 @@
 #include <lorawan.example.h>
 #endif
 #include <ota_manager.h>
+#include <tracker_app.h>
 
 namespace {
 constexpr uint32_t idleTimeoutMs = 15UL * 60UL * 1000UL;
@@ -129,6 +130,7 @@ void stopAp()
 namespace OtaManager {
 [[noreturn]] void run(uint32_t sleepIntervalMs)
 {
+    TrackerApp::endWatchdog(); // OTA has its own inactivity timeout.
     DeviceButton::acknowledgeOta();
     sleep_lora_radio();
     stop_gnss();

@@ -371,6 +371,29 @@ fix; check `flags.gps_fresh`.
 
 ## Verification before handoff
 
+### Tracking watchdog
+
+`TrackerApp::beginWatchdog()` adds a `tracker-cycle` user to ESP32's hardware-backed
+Task WDT before peripheral initialization. The framework's original 5-second
+timeout, idle-task subscriptions and panic/reboot behavior are not reconfigured;
+the Interrupt WDT is unchanged. A one-second heartbeat on the existing ESP timer
+service feeds only this user while elapsed tracking time is below
+`AppConfig::trackingWatchdogMs` (300 seconds). Tracking loops cannot extend this
+budget. At the deadline the heartbeat stops feeding and the hardware Task WDT
+expires within approximately its next 5 seconds, rather than a timer callback
+calling `esp_restart()`. If the timer-service task itself stalls, the hardware
+watchdog also stops receiving this user's heartbeat and can expire independently.
+No new monitoring task is created. A mutex serializes feeding and user deletion.
+The heartbeat and tracker subscription are removed immediately before deep sleep
+(including button power-off) and on entry to OTA. Existing framework watchdogs and
+OTA's inactivity timeout remain active as appropriate; not every fault is covered.
+Boot logs include the ESP reset reason. Unexpected reset takes the existing safe
+OTAA rejoin path, preserving durable DevNonce history, not the RTC session.
+The 300-second budget must be validated on hardware against GNSS acquisition,
+network RX delays and configured NbTrans repetitions. Host tests simulate the
+lifecycle/deadline only; real watchdog reset and OTA upload must be tested on a
+device. This does not guarantee retention of RTC events across abnormal resets.
+
 Build using `pio run`. Flash separately, then check gateway/network-server live
 data: unconfirmed `sendReceive=0` means no downlink, not proof of gateway receipt.
 Verify consecutive simulated positions, approximately 15-second TX intervals,

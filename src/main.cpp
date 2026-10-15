@@ -56,11 +56,13 @@ void setup()
     AudioFeedback::begin();
     // Button initialization can emit logs or enter OTA/shutdown.
     waitForUsbMonitor();
+    TrackerApp::beginWatchdog();
     DeviceButton::begin();
     if (DeviceButton::startedFromPowerOff()) lora_forget_rtc_session();
     if (DeviceButton::otaPending()) OtaManager::run(AppConfig::reportIntervalMs);
 
     Serial.println("\n=== ESP32-S3 Tracker Initializing ===");
+    Serial.printf("[BOOT] Reset reason: %d\n", int(esp_reset_reason()));
 
     Serial.printf("LoRa debug: %s\n", LORA_DEBUG ? "ON (real deep sleep)" : "OFF");
     DebugMode::begin(LORA_DEBUG, LORA_DEBUG_INTERVAL_MS);

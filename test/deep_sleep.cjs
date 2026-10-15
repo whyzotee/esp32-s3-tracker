@@ -35,6 +35,7 @@ enum class Event { DeepSleep };
 inline void playAndWait(Event) { calls.push_back(4); }
 }
 namespace DeviceButton { inline bool sosPending() { return sos; } }
+namespace TrackerApp { inline void endWatchdog() { calls.push_back(8); } }
 namespace PowerMode {
 inline bool enabled() { return false; }
 inline uint32_t reportInterval() { return 60000; }
@@ -65,7 +66,7 @@ inline void esp_sleep_enable_timer_wakeup(uint64_t value) { timer = value; }
 #include "deep_sleep.cpp"
 void reset() { calls.clear(); timer = 99; ext1 = true; sos = false; sensorReady = true; }
 void checkShutdown() {
-    assert((calls == std::vector<int>{0, 1, 2, 3, 4, 5, 6, 7}));
+    assert((calls == std::vector<int>{0, 1, 2, 3, 4, 5, 6, 8, 7}));
 }
 int main() {
     reset();
