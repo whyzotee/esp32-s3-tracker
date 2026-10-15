@@ -28,6 +28,16 @@ bool ready = false;
 bool radioReady = false;
 uint8_t deviceIdentity[32];
 
+int16_t initializeRadio()
+{
+    SPI.begin(Board::radioSck, Board::radioMiso, Board::radioMosi, Board::radioCs);
+    // SX1262 with DIO3-controlled 1.8 V TCXO; DIO2 controls RF switch.
+    const int16_t state = radio.begin(923.2, 125.0, 9, 5,
+        RADIOLIB_SX126X_SYNC_WORD_PRIVATE, 14, 8, 1.8);
+    radioReady = state == RADIOLIB_ERR_NONE;
+    return state;
+}
+
 void buildIdentity()
 {
     memcpy(deviceIdentity, &LoRaCredentials::joinEui, 8);
@@ -38,7 +48,36 @@ void buildIdentity()
 
 void sleep_lora_radio()
 {
-    if (radioReady) radio.sleep();
+    // Shutdown/OTA can be entered before the normal radio setup. Initialize
+    // the PHY only so sleep is sent reliably; do not join or change storage.
+    if (!radioReady) {
+        const int16_t state = initializeRadio();
+        Serial.printf("[LoRa] Radio init before sleep: %d\n", state);
+        if (state != RADIOLIB_ERR_NONE) {
+            ready = false;
+            Serial.println("[LoRa] Radio sleep skipped: init failed; low sleep current is not assured");
+            return;
+        }
+    }
+
+    // Restore the original warm-sleep baseline for current measurements.
+    // LoRaWAN session/counters in RTC are not affected.
+    const int16_t state = radio.sleep();
+    Serial.printf("[LoRa] Radio warm sleep: %d\n", state);
+    if (state != RADIOLIB_ERR_NONE)
+        Serial.println("[LoRa] Radio sleep command failed; low sleep current is not assured");
+
+    // Detach only LoRa's SPI2 bus. ADXL362 uses a separate SPI3 bus and must
+    // keep running for fall wake. Keep NSS pulled HIGH so it cannot float LOW
+    // and wake the SX1262; do not change reset or interrupt pins here.
+    SPI.end();
+    pinMode(Board::radioSck, INPUT);
+    pinMode(Board::radioMosi, INPUT);
+    pinMode(Board::radioMiso, INPUT);
+    pinMode(Board::radioCs, INPUT_PULLUP);
+    Serial.println("[LoRa] SPI released: SCK/MOSI/MISO=INPUT, CS=INPUT_PULLUP");
+    ready = false;
+    radioReady = false;
 }
 
 uint32_t lora_wait_ms()
@@ -57,14 +96,10 @@ bool setup_lora_wan_app()
     ready = false;
     buildIdentity();
 
-    SPI.begin(Board::radioSck, Board::radioMiso, Board::radioMosi, Board::radioCs);
-    // SX1262 with DIO3-controlled 1.8 V TCXO; DIO2 controls RF switch.
-    int16_t state = radio.begin(923.2, 125.0, 9, 5, RADIOLIB_SX126X_SYNC_WORD_PRIVATE, 14, 8, 1.8);
+    int16_t state = initializeRadio();
     Serial.printf("[LoRa] Radio init: %d\n", state);
     if (state != RADIOLIB_ERR_NONE)
         return false;
-    radioReady = true;
-
     state = node.beginOTAA(LoRaCredentials::joinEui, LoRaCredentials::devEui, nullptr, LoRaCredentials::appKey);
     if (state != RADIOLIB_ERR_NONE)
     {
