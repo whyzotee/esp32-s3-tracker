@@ -43,7 +43,7 @@
 | 33 | Accelerometer | Pending Fall | ทำให้ส่ง Event ไม่สำเร็จ | Event ถูกเก็บไว้ส่งใหม่รอบถัดไป | มีแล้ว — ใช้ confirmed ล้าง Pending เฉพาะเมื่อได้ LoRaWAN ACK; ไม่มี ACK หลับแล้ว Retry เก็บ RTC ไม่เพิ่ม NVS ยอมรับว่าสูญหายเมื่อไฟเลี้ยงขาด ACK ไม่ยืนยัน Backend | ☐ |
 | 34 | Motion / Stationary | Movement Detection | เคลื่อนไหวอุปกรณ์ | ระบบสามารถระบุสถานะการเคลื่อนไหวได้ | ยังไม่มี — ยืนยันความจำเป็น แล้วกำหนดเงื่อนไข/สถานะ Movement แยกจาก Free-fall | ☐ |
 | 35 | Motion / Stationary | Stationary Detection* | วางอุปกรณ์นิ่งตามเวลาที่กำหนด | สร้างสถานะ Inactivity/Stationary ตาม Logic | ยังไม่มี — ยืนยันความจำเป็น แล้วกำหนดเวลานิ่งและ Event | ☐ |
-| 36 | User Feedback | Status LED | ทดสอบแต่ละสถานะ | LED ทำงานตามสถานะที่กำหนด | มีแล้ว — LED2 ติดตอนทำงาน ดับตอนหลับ กระพริบ OTA แยกจาก LED Charger/GNSS PPS | ☐ |
+| 36 | User Feedback | Status LED | ทดสอบแต่ละสถานะ | LED ทำงานตามสถานะที่กำหนด | มีแล้ว — LED2 ติดตอนทำงาน ดับตอนหลับ กระพริบขณะหา GPS และ OTA (ติด/ดับอย่างละ 500 ms) แยกจาก LED Charger/GNSS PPS | ☐ |
 | 37 | User Feedback | Buzzer | Trigger Event | Buzzer ส่งเสียงตาม Pattern | มีแล้ว — ตรวจแต่ละ Pattern และหยุดเสียงก่อนหลับ | ☐ |
 | 38 | User Feedback | SOS Feedback | กด SOS | มี Feedback ยืนยันให้ผู้ใช้งาน | มีแล้ว — เสียงยืนยันการตรวจพบคำสั่ง ไม่ยืนยันการส่งถึง Server | ☐ |
 | 39 | User Feedback | Fall Feedback | จำลอง Fall Event | มี Feedback ตาม Firmware Design | มีแล้ว — ตรวจเสียงเมื่อเกิด Suspected Fall | ☐ |

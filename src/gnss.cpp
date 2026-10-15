@@ -12,6 +12,18 @@ RTC_DATA_ATTR bool hasPreviousFix = false;
 TinyGPSCustom gpFixQuality(GPS, "GPGGA", 6);
 TinyGPSCustom gnFixQuality(GPS, "GNGGA", 6);
 
+// LED2 is active-high. Restore the normal awake indicator on every exit path,
+// including a fix, timeout, or an SOS/Fall/OTA interruption.
+struct GnssSearchLed {
+    uint32_t started = millis();
+    GnssSearchLed() { digitalWrite(Board::statusLed, HIGH); }
+    void update() const {
+        digitalWrite(Board::statusLed,
+                     ((millis() - started) / 500U) % 2U == 0U ? HIGH : LOW);
+    }
+    ~GnssSearchLed() { digitalWrite(Board::statusLed, HIGH); }
+};
+
 struct FixStability {
     uint32_t lastEpoch = UINT32_MAX;
     uint32_t lastAt = 0;
@@ -117,6 +129,7 @@ void stop_gnss()
 
 bool get_location()
 {
+    GnssSearchLed searchLed;
     const uint32_t timeout = !hasPreviousFix
         ? AppConfig::firstGpsTimeoutMs : AppConfig::gpsTimeoutMs;
 
@@ -128,6 +141,7 @@ bool get_location()
 
     while (millis() - start < timeout)
     {
+        searchLed.update();
         DeviceButton::service();
         update_fall_detection(false);
         if (DeviceButton::sosPending() || DeviceButton::otaPending() ||
