@@ -99,8 +99,8 @@ keeps the normal three-click SOS action.
 The tracker stops its radio and GNSS, starts the password-protected Wi-Fi hotspot
 `Tracker-OTA-XXXXXX`, and prints its name and address to Serial Monitor. Connect
 to that hotspot using the default password `TrackerOTA123` and open
-[http://192.168.4.1](http://192.168.4.1). Change `OtaConfig::apPassword` in
-`include/ota_config.h` to an 8-63 character ASCII password, then rebuild and upload.
+[http://192.168.4.1](http://192.168.4.1). Change `OtaManager::apPassword` in
+`include/ota_manager.h` to an 8-63 character ASCII password, then rebuild and upload.
 Upload the
 PlatformIO application image:
 
@@ -182,7 +182,7 @@ Before building with an older PlatformIO installation, upgrade its Core:
 - `src/telemetry.cpp`: real/cached GPS readings and the 15-byte encoder.
 - `src/tracker_app.cpp`: wake-cycle orchestration, event priority, downlink dispatch and retry timing.
 - `src/ota_manager.cpp`: local Wi-Fi OTA portal, update handoff and rollback confirmation.
-- `src/lora_wan.cpp`: radio, OTAA activation, packet exchange and session persistence calls; no sleep scheduling.
+- `src/lorawan.cpp`: radio, OTAA activation, packet exchange and session persistence calls; no sleep scheduling.
 - `src/deep_sleep.cpp`: the only owner of ESP32 deep-sleep entry, wake sources and peripheral shutdown.
 - `src/lorawan_storage.cpp`: RTC session storage and durable OTAA nonce storage.
 - `src/fall_detection.cpp`: ADXL362 SPI event detection and wakeup handling.
@@ -198,7 +198,7 @@ There is no separate awake-only scheduling loop or unused `go_sleep()` path.
 Normal GNSS acquisition accepts three distinct one-second GGA fixes spanning at
 least two seconds, with at least six satellites and HDOP <= 2.00. Data must be
 fresh, and implausible jumps restart the stability check. Thresholds are in
-`include/app_config.h`. Acquisition still times out after 120 seconds before the
+`include/tracker_app.h`. Acquisition still times out after 120 seconds before the
 first accepted fix, or 30 seconds afterwards. Timeout retains the last accepted
 RTC location without setting the fresh-GNSS flag. SOS and fall events use the
 cached location immediately. Quality filtering does not guarantee metre-level
@@ -210,8 +210,10 @@ on always-on 3.3 V. Debug skips GNSS initialization; VEXT stays off.
 
 ## OTAA Provisioning and Session Persistence
 
-Device credentials (JoinEUI, DevEUI, AppKey) reside in `include/lorawan_credentials.h`
-(gitignored; copy from `include/lorawan_credentials.example.h`).
+Device credentials (JoinEUI, DevEUI, AppKey) and the radio API reside in
+`include/lorawan.h` (gitignored; copy from `include/lorawan.example.h`).
+Keep the API declarations in both headers synchronized when changing the radio API.
+Session/nonce storage remains separate in `lorawan_storage.h` and `lorawan_storage.cpp`.
 
 Session state and frame counters are stored in CRC-checked RTC memory, retained
 across deep sleep. Regular uplinks, including debug uplinks, do not write NVS.
@@ -246,7 +248,7 @@ Latitude and longitude are little-endian float32.
 
 Low battery is reported in flags bit 5 (`0x20`) without changing the 15-byte
 payload or Normal/SOS/Fall event codes. It enters at <=15% and clears at >=20%,
-configured in `include/app_config.h`. State is retained in RTC across deep sleep,
+configured in `include/tracker_app.h`. State is retained in RTC across deep sleep,
 not in NVS. An invalid ADC reading preserves the internal state but reports
 `low_battery: null`; it must not be treated as battery recovery. Battery percentage
 is a voltage-based estimate. Low battery does not change reporting intervals,

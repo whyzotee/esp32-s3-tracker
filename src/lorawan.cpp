@@ -2,16 +2,14 @@
 #include <RadioLib.h>
 #include <SPI.h>
 #include <audio_feedback.h>
-#include <app_config.h>
+#include <tracker_app.h>
 #include <board_pins.h>
 #include <battery.h>
-#include <lora_wan.h>
 #include <lorawan_storage.h>
-
-#if __has_include(<lorawan_credentials.h>)
-#include <lorawan_credentials.h>
+#if __has_include(<lorawan.h>)
+#include <lorawan.h>
 #else
-#include <lorawan_credentials.example.h>
+#include <lorawan.example.h>
 #endif
 
 namespace {
@@ -227,3 +225,4 @@ LoRaResult send_lora_telemetry(const Telemetry &sample)
                       result.acknowledged ? "received" : "missing; event remains pending");
     return result;
 }
+

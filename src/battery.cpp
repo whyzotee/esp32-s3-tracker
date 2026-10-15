@@ -1,5 +1,5 @@
 #include <Arduino.h>
-#include <app_config.h>
+#include <tracker_app.h>
 #include <battery.h>
 #include <board_pins.h>
 

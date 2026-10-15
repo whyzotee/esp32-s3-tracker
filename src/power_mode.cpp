@@ -1,5 +1,5 @@
 #include <power_mode.h>
-#include <app_config.h>
+#include <tracker_app.h>
 #include <esp_attr.h>
 
 namespace {

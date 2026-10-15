@@ -4,7 +4,7 @@ const cp = require('child_process');
 const os = require('os');
 const path = require('path');
 const root = path.resolve(__dirname, '..');
-const source = fs.readFileSync(path.join(root, 'src/lora_wan.cpp'), 'utf8');
+const source = fs.readFileSync(path.join(root, 'src/lorawan.cpp'), 'utf8');
 function extract(signature) {
     const start = source.indexOf(signature);
     if (start < 0) throw new Error(`Missing function: ${signature}`);

@@ -2,9 +2,9 @@
 
 เอกสารนี้จัดทำจากการอ่านโค้ดใน `src/`, `include/` และค่าการ build ใน
 `platformio.ini` โดยตรง ไม่อ้างพฤติกรรมจากเอกสาร Markdown เดิม Firmware
-ปัจจุบันที่ระบุใน `include/firmware_version.h` คือ **v1.2**
+ปัจจุบันที่ระบุใน `include/tracker_app.h` คือ **v1.3**
 
-> ห้ามเผยแพร่ไฟล์ `include/lorawan_credentials.h` หรือค่า JoinEUI, DevEUI และ
+> ห้ามเผยแพร่ไฟล์ `include/lorawan.h` หรือค่า JoinEUI, DevEUI และ
 > AppKey เพราะเป็นข้อมูลสำหรับเข้าระบบ LoRaWAN
 
 ## 1. ภาพรวมการทำงาน
@@ -125,7 +125,7 @@ flowchart TD
 | --- | --- |
 | `src/main.cpp` | จุดเริ่มต้น ตั้งค่า Serial, Debug และเริ่มอุปกรณ์แต่ละส่วน |
 | `src/tracker_app.cpp` | ควบคุมหนึ่งรอบของ tracker: อ่านข้อมูล, ส่ง LoRaWAN, จัดการเหตุการณ์, เลือกเวลานอน |
-| `src/lora_wan.cpp` | ตั้งค่า SX1262/AS923, OTAA Join, ส่ง uplink และรับ downlink |
+| `src/lorawan.cpp` | ตั้งค่า SX1262/AS923, OTAA Join, ส่ง uplink และรับ downlink |
 | `src/lorawan_storage.cpp` | เก็บ session/frame counter ใน RTC และเก็บ DevNonce อย่างปลอดภัยใน NVS |
 | `src/telemetry.cpp` | อ่าน/เข้ารหัส latitude, longitude, status, version และแบตเตอรี่เป็น payload 15 bytes |
 | `src/gnss.cpp` | สั่ง VEXT, UART1 และอ่าน NMEA จาก L76L |
@@ -147,14 +147,14 @@ flowchart TD
 
 | ไฟล์ | ค่าที่เกี่ยวข้อง | คำอธิบาย |
 | --- | --- | --- |
-| `include/lorawan_credentials.h` | `joinEui`, `devEui`, `appKey` | ข้อมูล OTAA ของอุปกรณ์ ใช้กับ `node.beginOTAA()`; สร้างจากไฟล์ example และไม่ควร commit หรือเผยแพร่ |
+| `include/lorawan.h` | `joinEui`, `devEui`, `appKey` | ข้อมูล OTAA ของอุปกรณ์และ API วิทยุ ใช้กับ `node.beginOTAA()`; สร้างจาก `lorawan.example.h` และไม่ควร commit หรือเผยแพร่ |
 | `src/main.cpp` | `LORA_DEBUG` | `true` = เดินจำลองและส่งตาม Debug interval; `false` = ใช้ GNSS จริง |
 | `src/main.cpp` | `LORA_DEBUG_INTERVAL_MS` | รอบ deep sleep ใน Debug mode; ค่าเริ่มต้น 15,000 ms |
-| `include/app_config.h` | `reportIntervalMs` | รอบรายงานปกติ; โค้ดปัจจุบัน 1 นาที |
-| `include/app_config.h` | `lowPowerIntervalMs` | รอบรายงาน Low Power; โค้ดปัจจุบัน 15 นาที |
-| `include/app_config.h` | `firstGpsTimeoutMs` / `gpsTimeoutMs` | เวลารอ GNSS ครั้งแรก 120 วินาที / ครั้งถัดไป 30 วินาที |
-| `include/app_config.h` | `uplinkPort` / `uplinkDataRate` | FPort 2 และ DR3 (AS923 SF9/BW125) |
-| `include/firmware_version.h` | `major`, `minor` | หมายเลข firmware ใน payload; ปัจจุบัน 1.2 |
+| `include/tracker_app.h` | `reportIntervalMs` | รอบรายงานปกติ; โค้ดปัจจุบัน 1 นาที |
+| `include/tracker_app.h` | `lowPowerIntervalMs` | รอบรายงาน Low Power; โค้ดปัจจุบัน 15 นาที |
+| `include/tracker_app.h` | `firstGpsTimeoutMs` / `gpsTimeoutMs` | เวลารอ GNSS ครั้งแรก 120 วินาที / ครั้งถัดไป 30 วินาที |
+| `include/tracker_app.h` | `uplinkPort` / `uplinkDataRate` | FPort 2 และ DR2 (AS923 SF10/BW125) |
+| `include/tracker_app.h` | `FirmwareVersion::major`, `FirmwareVersion::minor` | หมายเลข firmware ใน payload; ปัจจุบัน 1.3 |
 | `include/board_pins.h` | GPIO ทั้งหมด | แก้เมื่อเปลี่ยน hardware เท่านั้น |
 
 ### ขาสำคัญของบอร์ด
@@ -231,10 +231,10 @@ Firmware ควบคุม buzzer ที่ GPIO4 ด้วย LEDC และ L
 คัดลอกไฟล์ตัวอย่างก่อน build ครั้งแรก:
 
 ```bash
-cp include/lorawan_credentials.example.h include/lorawan_credentials.h
+cp include/lorawan.example.h include/lorawan.h
 ```
 
-เปิด `include/lorawan_credentials.h` แล้วใส่ JoinEUI, DevEUI และ AppKey ที่
+เปิด `include/lorawan.h` แล้วใส่ JoinEUI, DevEUI และ AppKey ที่
 ระบบ LoRaWAN ออกให้ โค้ดเรียก `node.beginOTAA()` ด้วยค่าเหล่านี้โดยตรง
 ห้ามนำ AppSKey ของ ABP มาใส่แทน AppKey
 
@@ -278,7 +278,7 @@ pio run -e heltec_wifi_lora_32_V3 -t upload --upload-port PORT
 1. ขณะเครื่องเปิด กด S2 สั้น 2 ครั้ง
 2. กด S2 ครั้งที่ 3 ค้าง 3 วินาที; ไม่จำเป็นต้องปล่อย
 3. ดู Serial Monitor จะพบชื่อ AP เช่น `Tracker-OTA-C13DE8`
-4. เชื่อม Wi-Fi นั้นด้วยรหัสผ่านเริ่มต้น `TrackerOTA123` (เปลี่ยนได้ที่ `OtaConfig::apPassword` ใน `include/ota_config.h` เป็น ASCII 8–63 ตัวอักษร แล้ว build และ upload ใหม่)
+4. เชื่อม Wi-Fi นั้นด้วยรหัสผ่านที่กำหนดใน `OtaManager::apPassword` ของ `include/ota_manager.h` (เปลี่ยนเป็น ASCII 8–63 ตัวอักษร แล้ว build และ upload ใหม่)
 5. เปิด `http://192.168.4.1`
 6. เลือก `.pio/build/heltec_wifi_lora_32_V3/firmware.bin` แล้วกด Upload
 7. รอข้อความสำเร็จ; บอร์ดจะ restart เข้า firmware ใหม่เอง
@@ -374,9 +374,9 @@ downlink สำเร็จไม่ได้หมายความว่า�
 ## ไฟล์ต้นทางที่ใช้ตรวจสอบคู่มือนี้
 
 - `src/main.cpp`, `src/tracker_app.cpp`: ลำดับการทำงานหลัก
-- `src/lora_wan.cpp`, `src/lorawan_storage.cpp`: OTAA, session และ DevNonce
+- `src/lorawan.cpp`, `src/lorawan_storage.cpp`: OTAA, session และ DevNonce
 - `src/device_button.cpp`, `src/deep_sleep.cpp`: ปุ่มและ wake/sleep
 - `src/gnss.cpp`, `src/fall_detection.cpp`, `src/battery.cpp`: sensor และ battery
 - `src/telemetry.cpp`, `src/power_mode.cpp`, `src/ota_manager.cpp`: payload, downlink และ OTA
-- `include/app_config.h`, `include/board_pins.h`, `include/firmware_version.h`, `platformio.ini`:
+- `include/tracker_app.h`, `include/board_pins.h`, `platformio.ini`:
   ค่า configuration ที่ firmware ใช้งานจริง

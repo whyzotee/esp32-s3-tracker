@@ -1,7 +1,7 @@
 #include <gnss.h>
 #include <TinyGPS++.h>
 #include <device_button.h>
-#include <app_config.h>
+#include <tracker_app.h>
 #include <fall_detection.h>
 
 TinyGPSPlus GPS;

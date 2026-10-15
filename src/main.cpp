@@ -5,11 +5,14 @@
 #include <deep_sleep.h>
 #include <fall_detection.h>
 #include <gnss.h>
-#include <lora_wan.h>
+#if __has_include(<lorawan.h>)
+#include <lorawan.h>
+#else
+#include <lorawan.example.h>
+#endif
 #include <tracker_app.h>
 #include <device_button.h>
 #include <ota_manager.h>
-#include <app_config.h>
 #include <battery.h>
 #include <esp_system.h>
 

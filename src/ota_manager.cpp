@@ -7,9 +7,12 @@
 #include <deep_sleep.h>
 #include <device_button.h>
 #include <gnss.h>
-#include <lora_wan.h>
+#if __has_include(<lorawan.h>)
+#include <lorawan.h>
+#else
+#include <lorawan.example.h>
+#endif
 #include <ota_manager.h>
-#include <ota_config.h>
 
 namespace {
 constexpr uint32_t idleTimeoutMs = 15UL * 60UL * 1000UL;
@@ -98,7 +101,7 @@ bool startAp()
         Serial.println("[OTA] Failed to configure fixed AP IP");
         return false;
     }
-    if (!WiFi.softAP(apName.c_str(), OtaConfig::apPassword)) return false;
+    if (!WiFi.softAP(apName.c_str(), OtaManager::apPassword)) return false;
 
     server.on("/", HTTP_GET, handleRoot);
     server.on("/update", HTTP_POST, handleUploadDone, handleUploadBody);

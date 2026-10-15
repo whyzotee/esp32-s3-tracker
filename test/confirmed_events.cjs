@@ -4,7 +4,7 @@ const cp = require('child_process');
 const os = require('os');
 const path = require('path');
 const root = path.resolve(__dirname, '..');
-const source = fs.readFileSync(path.join(root, 'src/lora_wan.cpp'), 'utf8');
+const source = fs.readFileSync(path.join(root, 'src/lorawan.cpp'), 'utf8');
 const signature = 'LoRaResult send_lora_telemetry(const Telemetry &sample)';
 const start = source.indexOf(signature);
 if (start < 0) throw new Error('Missing send function');
@@ -17,7 +17,7 @@ try {
     fs.writeFileSync(path.join(dir, 'test.cpp'), `
 #include <cassert>
 #include <cstring>
-#include <lora_wan.h>
+#include <lorawan.example.h>
 constexpr int RADIOLIB_ERR_UNKNOWN=-1, RADIOLIB_ERR_NONE=0;
 namespace AppConfig { constexpr uint8_t uplinkDataRate=2, uplinkPort=2; }
 struct LoRaWANEvent_t { uint8_t fPort=0; bool confirming=false; };

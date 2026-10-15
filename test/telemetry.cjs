@@ -9,7 +9,7 @@ const encoder = telemetry.slice(telemetry.indexOf('void encode_telemetry'));
 const walk = debug.slice(debug.indexOf('Telemetry walking_sample'), debug.indexOf('void message'));
 const program = `
 #include <telemetry.h>
-#include <firmware_version.h>
+#include <tracker_app.h>
 #include <cstring>
 #include <cassert>
 #include <cmath>

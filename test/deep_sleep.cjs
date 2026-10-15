@@ -57,7 +57,7 @@ inline void esp_sleep_enable_timer_wakeup(uint64_t value) { timer = value; }
 [[noreturn]] inline void esp_deep_sleep_start() { calls.push_back(7); throw Sleeping{}; }
 `);
     for (const name of ['Arduino.h', 'audio_feedback.h', 'board_pins.h', 'device_button.h',
-        'fall_detection.h', 'gnss.h', 'lora_wan.h', 'power_mode.h', 'esp_sleep.h', 'driver/rtc_io.h']) {
+        'fall_detection.h', 'gnss.h', 'lorawan.h', 'power_mode.h', 'esp_sleep.h', 'driver/rtc_io.h']) {
         fs.writeFileSync(path.join(dir, name), '#include <mocks.h>\n');
     }
     fs.writeFileSync(path.join(dir, 'test.cpp'), `

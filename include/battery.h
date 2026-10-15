@@ -1,7 +1,7 @@
 #pragma once
 
 #include <stdint.h>
-#include <app_config.h>
+#include <tracker_app.h>
 
 struct BatteryReading {
     uint16_t millivolts = 0;

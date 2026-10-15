@@ -1,13 +1,16 @@
 #include <Arduino.h>
 #include <tracker_app.h>
-#include <app_config.h>
 #include <battery.h>
 #include <board_pins.h>
 #include <debug_mode.h>
 #include <deep_sleep.h>
 #include <device_button.h>
 #include <fall_detection.h>
-#include <lora_wan.h>
+#if __has_include(<lorawan.h>)
+#include <lorawan.h>
+#else
+#include <lorawan.example.h>
+#endif
 #include <ota_manager.h>
 #include <power_mode.h>
 #include <telemetry.h>

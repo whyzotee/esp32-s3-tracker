@@ -1,12 +1,16 @@
 #include <Arduino.h>
 #include <audio_feedback.h>
 #include <deep_sleep.h>
-#include <app_config.h>
+#include <tracker_app.h>
 #include <board_pins.h>
 #include <device_button.h>
 #include <fall_detection.h>
 #include <gnss.h>
-#include <lora_wan.h>
+#if __has_include(<lorawan.h>)
+#include <lorawan.h>
+#else
+#include <lorawan.example.h>
+#endif
 #include <power_mode.h>
 #include <esp_sleep.h>
 #include <driver/rtc_io.h>
