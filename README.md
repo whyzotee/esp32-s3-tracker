@@ -96,9 +96,12 @@ While the tracker is on, press S2 / GPIO0 twice shortly, then hold the third
 press for three seconds. OTA/AP mode starts immediately at the three-second
 threshold; releasing the button is not required. A third short press instead
 keeps the normal three-click SOS action.
-The tracker stops its radio and GNSS, starts the open Wi-Fi hotspot
+The tracker stops its radio and GNSS, starts the password-protected Wi-Fi hotspot
 `Tracker-OTA-XXXXXX`, and prints its name and address to Serial Monitor. Connect
-to that hotspot and open [http://192.168.4.1](http://192.168.4.1). Upload the
+to that hotspot using the default password `TrackerOTA123` and open
+[http://192.168.4.1](http://192.168.4.1). Change `OtaConfig::apPassword` in
+`include/ota_config.h` to an 8-63 character ASCII password, then rebuild and upload.
+Upload the
 PlatformIO application image:
 
 ```text
@@ -114,8 +117,8 @@ verified by Arduino `Update`. An interrupted or failed upload leaves the install
 firmware selected. This project intentionally does not enable bootloader rollback:
 after a successful upload, the new firmware is the firmware booted on restart.
 
-The OTA hotspot has no password or upload authentication by design. Anyone within
-Wi-Fi range can upload firmware only while this mode is deliberately enabled, so do
+The OTA hotspot requires its Wi-Fi password; the upload page has no separate login.
+Anyone connected to the hotspot can upload firmware while this mode is enabled, so do
 not leave it active in an untrusted area. Flash the first OTA-capable firmware using
 the wired method, and use stable J4/external power for every update; the known
 battery-path reset problem can interrupt an update.

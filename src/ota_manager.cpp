@@ -9,6 +9,7 @@
 #include <gnss.h>
 #include <lora_wan.h>
 #include <ota_manager.h>
+#include <ota_config.h>
 
 namespace {
 constexpr uint32_t idleTimeoutMs = 15UL * 60UL * 1000UL;
@@ -91,7 +92,7 @@ bool startAp()
     apName = name;
 
     WiFi.mode(WIFI_AP);
-    if (!WiFi.softAP(apName.c_str())) return false;
+    if (!WiFi.softAP(apName.c_str(), OtaConfig::apPassword)) return false;
 
     server.on("/", HTTP_GET, handleRoot);
     server.on("/update", HTTP_POST, handleUploadDone, handleUploadBody);
@@ -102,7 +103,7 @@ bool startAp()
     });
     server.begin();
     touch();
-    Serial.printf("[OTA] AP ready: %s at http://%s/ (open network)\n", apName.c_str(),
+    Serial.printf("[OTA] AP ready: %s at http://%s/ (password protected)\n", apName.c_str(),
                   WiFi.softAPIP().toString().c_str());
     return true;
 }
