@@ -12,6 +12,7 @@ try {
 #include <algorithm>
 #include <vector>
 using std::min;
+using std::max;
 enum { ESP_SLEEP_WAKEUP_ALL, ESP_SLEEP_WAKEUP_EXT0, ESP_SLEEP_WAKEUP_EXT1,
        ESP_SLEEP_WAKEUP_TIMER };
 inline std::vector<int> calls;
@@ -21,7 +22,7 @@ struct Sleeping {};
 struct SerialMock {
     void println(const char *) {}
     template<class... T> void printf(const char *, T...) {}
-    void flush() { calls.push_back(5); }
+    void flush() { calls.push_back(6); }
 };
 inline SerialMock Serial;
 inline void delay(int) {}
@@ -34,6 +35,10 @@ enum class Event { DeepSleep };
 inline void playAndWait(Event) { calls.push_back(4); }
 }
 namespace DeviceButton { inline bool sosPending() { return sos; } }
+namespace PowerMode {
+inline bool enabled() { return false; }
+inline uint32_t reportInterval() { return 60000; }
+}
 inline bool prepare_fall_detection_sleep() { ext1 = sensorReady; return sensorReady; }
 inline void sleep_lora_radio() { calls.push_back(2); }
 inline void stop_gnss() { calls.push_back(3); }
@@ -52,7 +57,7 @@ inline void esp_sleep_enable_timer_wakeup(uint64_t value) { timer = value; }
 [[noreturn]] inline void esp_deep_sleep_start() { calls.push_back(7); throw Sleeping{}; }
 `);
     for (const name of ['Arduino.h', 'audio_feedback.h', 'board_pins.h', 'device_button.h',
-        'fall_detection.h', 'gnss.h', 'lora_wan.h', 'esp_sleep.h', 'driver/rtc_io.h']) {
+        'fall_detection.h', 'gnss.h', 'lora_wan.h', 'power_mode.h', 'esp_sleep.h', 'driver/rtc_io.h']) {
         fs.writeFileSync(path.join(dir, name), '#include <mocks.h>\n');
     }
     fs.writeFileSync(path.join(dir, 'test.cpp'), `
@@ -66,6 +71,12 @@ int main() {
     reset();
     try { DeepSleep::timed(15000); } catch (Sleeping &) {}
     assert(timer == 15000000 && ext1); checkShutdown();
+    reset(); sos = true;
+    try { DeepSleep::timed(60000, 60000); } catch (Sleeping &) {}
+    assert(timer == 60000000 && ext1); checkShutdown();
+    reset(); sensorReady = false; sos = true;
+    try { DeepSleep::timed(208000, 208000); } catch (Sleeping &) {}
+    assert(timer == 208000000 && !ext1); checkShutdown();
     reset();
     try { DeepSleep::timed(3600000); } catch (Sleeping &) {}
     assert(timer == 3600000000ULL && ext1); checkShutdown();

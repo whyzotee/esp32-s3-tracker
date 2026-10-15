@@ -26,11 +26,11 @@ uint32_t reportInterval()
     while (true) delay(1000);
 }
 
-[[noreturn]] void sleepFor(uint32_t durationMs)
+[[noreturn]] void sleepFor(uint32_t durationMs, uint32_t minimumMs = 0)
 {
     DeviceButton::service();
     if (DeviceButton::otaPending()) startOtaIfRequested();
-    DeepSleep::timed(durationMs);
+    DeepSleep::timed(durationMs, minimumMs);
 }
 
 void handleDownlink(const LoRaResult &result)
@@ -71,7 +71,7 @@ namespace TrackerApp {
     }
     if (DeviceButton::otaPending()) startOtaIfRequested();
     if (lora_wait_ms() > 0)
-        sleepFor(max(uint32_t(1000), lora_wait_ms()));
+        sleepFor(max(uint32_t(1000), lora_wait_ms()), lora_wait_ms());
 
     const uint8_t status = fall_detection_pending() ? 2 : (DeviceButton::sosPending() ? 1 : 0);
     Telemetry sample = debug ? DebugMode::walking_sample(status) : read_telemetry(status);
@@ -103,13 +103,15 @@ namespace TrackerApp {
     const LoRaResult result = send_lora_telemetry(sample);
     DebugMode::result(result.code);
     handleDownlink(result);
-    if (result.code >= 0) {
+    if (result.delivered(sample.status)) {
         if (sample.status == 2) acknowledge_fall_detection();
         if (sample.status == 1) DeviceButton::acknowledgeSos();
     }
 
-    const uint32_t interval = result.code < 0 || !result.sessionSaved
+    const uint32_t interval = !result.delivered(sample.status) || !result.sessionSaved
         ? AppConfig::retryInitialMs : reportInterval();
-    sleepFor(max(interval, lora_wait_ms()));
+    const uint32_t minimumSleep = max(lora_wait_ms(),
+        result.delivered(sample.status) ? uint32_t(0) : AppConfig::retryInitialMs);
+    sleepFor(max(interval, minimumSleep), minimumSleep);
 }
 }

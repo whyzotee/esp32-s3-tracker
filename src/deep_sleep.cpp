@@ -45,7 +45,7 @@ void logWakeReason()
                   static_cast<unsigned long>(PowerMode::reportInterval()));
 }
 
-[[noreturn]] void timed(uint32_t durationMs)
+[[noreturn]] void timed(uint32_t durationMs, uint32_t minimumMs)
 {
     esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
     // Keep pending events in RTC and retry by timer if EXT1 cannot be armed.
@@ -55,6 +55,7 @@ void logWakeReason()
     }
     if (DeviceButton::sosPending())
         durationMs = min(durationMs, AppConfig::eventRetryMs);
+    durationMs = max(durationMs, minimumMs);
     armButton();
     esp_sleep_enable_timer_wakeup(uint64_t(durationMs) * 1000);
     Serial.printf("[SLEEP] Timer: %lu ms; button/fall wake enabled when available\n",

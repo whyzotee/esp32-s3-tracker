@@ -1,7 +1,7 @@
 # ESP32-S3 LoRaWAN tracker
 
 The radio uses RadioLib 7.7.1 with SX1262, OTAA (Over-The-Air Activation), AS923, Class A,
-unconfirmed uplinks on port 2. No Heltec activation license or Serial
+unconfirmed Normal uplinks and confirmed SOS/Fall uplinks on port 2. No Heltec activation license or Serial
 provisioning dialogue is used. All debugging output is sent via Serial Monitor (115200 baud).
 
 Target: [Heltec Wireless Shell V3](https://heltec.org/project/wireless-shell-v3/)
@@ -125,9 +125,16 @@ battery-path reset problem can interrupt an update.
 
 A background task debounces the button during GPS acquisition and radio blocking
 calls. Power-off is applied at the next safe service point, not midway through RF.
-SOS stays pending across deep sleep until the local send succeeds (unconfirmed
-uplinks do not guarantee gateway receipt). If fall and SOS are pending together,
-fall is sent first and SOS retries on a short timer. No extra NVS writes are used.
+SOS/Fall stay pending across deep sleep until a valid LoRaWAN ACK is received.
+An unrelated downlink or a nonnegative send result alone does not clear these events.
+Without an ACK, the device sleeps for the existing retry interval (60 seconds),
+or longer if required by LoRaWAN airtime limits, before another send cycle; no
+application-level immediate retry loop is added. RadioLib handles any network-configured
+NbTrans repetitions within its bounded send call. Normal remains unconfirmed.
+If fall and SOS are pending together, fall is sent first; the other event remains pending.
+No extra NVS writes are used; pending events can be lost on power loss. ACK confirms
+network reception, not Backend alert creation. Retries can produce duplicate application
+events, which the Backend must account for; the payload has no unique event ID.
 
 ### Application-controlled Low Power Mode
 

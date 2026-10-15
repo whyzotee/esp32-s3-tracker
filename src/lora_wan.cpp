@@ -201,15 +201,18 @@ LoRaResult send_lora_telemetry(const Telemetry &sample)
         return result;
     }
 
-    Serial.printf("[LoRa] TX port=%u bytes=%u FCnt=%lu status=%u\n",
+    const bool confirmed = sample.status == 1 || sample.status == 2;
+    Serial.printf("[LoRa] TX port=%u bytes=%u FCnt=%lu status=%u confirmed=%s\n",
                   AppConfig::uplinkPort, unsigned(sizeof(payload)),
-                  (unsigned long)LoRaStorage::nextCounter(node), sample.status);
+                  (unsigned long)LoRaStorage::nextCounter(node), sample.status,
+                  confirmed ? "yes" : "no");
 
     LoRaWANEvent_t event{};
     result.downlinkLength = sizeof(result.downlink);
     result.code = node.sendReceive(payload, sizeof(payload), AppConfig::uplinkPort,
-                                   result.downlink, &result.downlinkLength, false,
+                                   result.downlink, &result.downlinkLength, confirmed,
                                    nullptr, &event);
+    result.acknowledged = confirmed && result.code > 0 && event.confirming;
     result.downlinkPort = event.fPort;
     if (result.code <= 0) result.downlinkLength = 0;
     result.sessionSaved = storage.saveUplink(node);
@@ -219,5 +222,8 @@ LoRaResult send_lora_telemetry(const Telemetry &sample)
     }
     Serial.printf("[LoRa] sendReceive=%d (0=no downlink, 1/2=RX window, negative=error)\n",
                   result.code);
+    if (confirmed)
+        Serial.printf("[LoRa] Uplink ACK: %s\n",
+                      result.acknowledged ? "received" : "missing; event remains pending");
     return result;
 }
