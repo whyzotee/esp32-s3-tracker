@@ -6,6 +6,10 @@ All notable firmware changes are documented here.
 
 ### Changed
 
+- Accept GNSS locations only after three distinct GGA epochs with at least six
+  satellites, HDOP <= 2.00, fresh data and no implausible jump. Retain cached
+  coordinates on timeout without setting the fresh-GPS flag; urgent events
+  interrupt acquisition and continue to use cached coordinates.
 - Pin pioarduino 55.03.312-1 (Arduino-ESP32 3.3.12 / ESP-IDF 5.5.5)
   and RadioLib 7.8.1; require PlatformIO Core 6.2.0 or newer.
 

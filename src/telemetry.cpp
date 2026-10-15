@@ -1,11 +1,8 @@
 #include <Arduino.h>
-#include <TinyGPS++.h>
 #include <firmware_version.h>
 #include <gnss.h>
 #include <telemetry.h>
 #include <cstring>
-
-extern TinyGPSPlus GPS;
 
 extern int32_t rtc_lat;
 extern int32_t rtc_lon;
@@ -28,12 +25,10 @@ Telemetry read_telemetry(uint8_t status)
     }
     else
     {
-        get_location();
-        if (GPS.location.isValid())
+        if (get_location())
         {
             sample.flags |= TelemetryFlags::gpsFresh;
-            sample.lat = GPS.location.lat();
-            sample.lon = GPS.location.lng();
+            useRtcLocation(sample);
         }
         else
         {

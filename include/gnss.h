@@ -5,6 +5,7 @@
 
 void setup_gnss(bool rawNmeaDebug);
 void stop_gnss();
-void get_location();
+// True only when a new fix passes the quality/stability checks this acquisition.
+bool get_location();
 
 #endif

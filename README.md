@@ -188,6 +188,15 @@ wakeup; it never enters sleep. The radio returns a `LoRaResult` and does not
 interpret application commands, acknowledge sensor events or manage buttons.
 There is no separate awake-only scheduling loop or unused `go_sleep()` path.
 
+Normal GNSS acquisition accepts three distinct one-second GGA fixes spanning at
+least two seconds, with at least six satellites and HDOP <= 2.00. Data must be
+fresh, and implausible jumps restart the stability check. Thresholds are in
+`include/app_config.h`. Acquisition still times out after 120 seconds before the
+first accepted fix, or 30 seconds afterwards. Timeout retains the last accepted
+RTC location without setting the fresh-GNSS flag. SOS and fall events use the
+cached location immediately. Quality filtering does not guarantee metre-level
+accuracy and may increase awake time in poor reception.
+
 With `LORA_DEBUG = false`, VEXT is enabled for GPS acquisition: L76L VCC
 uses this shared rail. VEXT is switched off during deep sleep. ADXL362 remains
 on always-on 3.3 V. Debug skips GNSS initialization; VEXT stays off.
