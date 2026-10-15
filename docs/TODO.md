@@ -20,7 +20,7 @@
 | 10 | GNSS/GPS | Position Fix | ทดสอบในพื้นที่กลางแจ้ง | สามารถรับตำแหน่ง Latitude/Longitude ได้ | มีแล้ว — เทียบตำแหน่งอ้างอิง ไม่รับประกัน Fix ในอาคาร | ☐ |
 | 11 | GNSS/GPS | GPS Validity | ตรวจข้อมูล GNSS | Firmware แยกข้อมูล Valid/Invalid ได้ | มีแล้ว — ตรวจคุณภาพ GGA, ดาวเทียม, HDOP, ความสดและความต่อเนื่องของ Fix | ☐ |
 | 12 | GNSS/GPS | GNSS Timeout | ทดสอบในพื้นที่รับสัญญาณไม่ได้ | ระบบยกเลิกการรอเมื่อครบเวลาที่กำหนด | มีแล้ว — ไม่มีพิกัดเดิมรอได้ 120 วินาที มีพิกัดเดิมรอ 30 วินาที | ☐ |
-| 13 | GNSS/GPS | Last Known Position | ทำให้รอบถัดไป GNSS Fix ไม่สำเร็จ | ระบบสามารถใช้พิกัดล่าสุดตามเงื่อนไข | มีข้อจำกัด — ใช้ RTC ข้าม Deep Sleep ไม่รับประกันหลังไฟดับ; ไม่เคย Fix อาจเป็น 0,0 | ☐ |
+| 13 | GNSS/GPS | Last Known Position | ทำให้รอบถัดไป GNSS Fix ไม่สำเร็จ | ระบบสามารถใช้พิกัดล่าสุดตามเงื่อนไข | มีแล้ว — ใช้พิกัดล่าสุดใน RTC ข้าม Deep Sleep; ตกลงไม่เพิ่ม NVS ยอมรับว่าหลังถอดแบตพิกัดเก่าสูญหาย ต้องค้นหาใหม่ ก่อนมี Fix อาจส่ง 0,0 | ☐ |
 | 14 | GNSS/GPS | ปิด GNSS | จบรอบการรับตำแหน่ง | GNSS ถูกปิดเพื่อลดการใช้พลังงาน | มีแล้ว — หยุด UART/ปิด VEXT ก่อนหลับ ตรวจ VCC จริง ไม่ได้ตัดไฟ Backup ทุกจุด | ☐ |
 | 15 | LoRaWAN | OTAA Join | เปิดอุปกรณ์และตรวจ ChirpStack | Device Join Network สำเร็จ | มีแล้ว — ตรวจ Join Request/Accept และค่าประจำอุปกรณ์ตรงกับ Server | ☐ |
 | 16 | LoRaWAN | Session Restore | Wake จาก Deep Sleep | สามารถกลับมาใช้ Session เดิมตาม Firmware Design | มีแล้ว — ต้องตรวจหลายรอบหลังแก้ SPI ว่า Session/Frame Counter ต่อเนื่อง | ☐ |
@@ -56,7 +56,7 @@
 | 46 | Power Saving | Wi-Fi/Bluetooth Off | Normal Operation | ไม่เปิดระบบที่ไม่จำเป็นในช่วง Tracking | มีแล้ว — Wi-Fi ใช้ใน OTA ตรวจปิดหลังออก OTA และกลับ Tracking | ☐ |
 | 47 | Low Power Mode | เปิด Low Power Mode | ส่ง Downlink Command | Device เปลี่ยนเป็นรอบ Low Power | มีแล้ว — FPort 10, AQAP; ปัจจุบันหลับ 15 นาที แยกจาก Low Battery | ☐ |
 | 48 | Low Power Mode | กลับ Normal Mode | ส่ง Downlink Command | Device กลับสู่รอบ Normal | มีแล้ว — FPort 10, AAAA; ปัจจุบันหลับ 1 นาที ตรวจ Log/เวลาจริง | ☐ |
-| 49 | Low Power Mode | Persistence | เข้า Deep Sleep แล้ว Wake | สถานะ Power Mode ยังคงถูกต้อง | มีข้อจำกัด — เก็บ RTC ข้าม Deep Sleep ไม่รับประกันหลังไฟดับ ต้องยืนยันความต้องการเก็บถาวร | ☐ |
+| 49 | Low Power Mode | Persistence | เข้า Deep Sleep แล้ว Wake | สถานะ Power Mode ยังคงถูกต้อง | มีแล้ว — เก็บ RTC ข้าม Deep Sleep; ตกลงไม่เพิ่ม NVS ยอมรับว่าหลังถอดแบตกลับ Normal (Low Power OFF) หากต้องการเปิด Low Power ต้องส่ง Downlink ใหม่ | ☐ |
 | 50 | Telemetry | Device ID | ตรวจ Payload | ระบุอุปกรณ์ได้ถูกต้อง | มีข้อจำกัด — DevEUI อยู่ใน ChirpStack Event Envelope ไม่ซ้ำใน Payload 15 ไบต์ Backend ต้องใช้ Envelope ระบุอุปกรณ์ | ☐ |
 | 51 | Telemetry | Position | ตรวจ Payload | Latitude/Longitude ถูกต้อง | มีข้อจำกัด — Float32 จาก Fix ผ่านเกณฑ์หรือ RTC ต้องดู gps_fresh; ไม่มี Fix อาจเป็น 0,0 | ☐ |
 | 52 | Telemetry | Battery | ตรวจ Payload | Battery Status ถูกส่ง | มีแล้ว — mV/เปอร์เซ็นต์/battery_valid และ low_battery ใหม่; ADC invalid ให้ Decoder แสดง null | ☐ |
@@ -64,7 +64,7 @@
 | 54 | Telemetry | Firmware Version | ตรวจ Payload/Status | ระบุ Firmware Version ได้ | มีแล้ว — Major/Minor 2 ไบต์ใน Uplink ปัจจุบัน 1.3 ไม่ใช่ Custom Field ใน DevStatusAns | ☐ |
 | 55 | Telemetry | Timestamp | ตรวจ Server Record | บันทึกเวลาของข้อมูลได้ถูกต้องตามการออกแบบ | ภายนอก — ใช้เวลา ChirpStack/Server ไม่มีเวลา GNSS ใน Payload จึงไม่ใช่เวลาวัดพิกัดเก่า | ☐ |
 | 56 | OTA | เข้า OTA Mode | ใช้คำสั่ง/วิธีเข้าสู่ OTA | Device เปิด OTA Mode | มีแล้ว — ทดสอบรูปแบบปุ่มไม่ชนกับ SOS/ปิดเครื่อง | ☐ |
-| 57 | OTA | Wi-Fi AP | ตรวจ SSID | พบ Access Point ของ Tracker | มีแล้ว — ตรวจ SSID/การเชื่อมตาม ota_config.h ไม่บันทึกรหัสผ่านลงหลักฐาน | ☐ |
+| 57 | OTA | Wi-Fi AP | ตรวจ SSID | พบ Access Point ของ Tracker | มีแล้ว — ตรวจ SSID/การเชื่อมตาม ota_manager.h ไม่บันทึกรหัสผ่านลงหลักฐาน | ☐ |
 | 58 | OTA | Web OTA | เปิดหน้า OTA | สามารถเข้าหน้า Upload Firmware | มีแล้ว — ตรวจหน้า Web หลังเชื่อม AP | ☐ |
 | 59 | OTA | Firmware Upload | Upload Firmware | เขียน Firmware ใหม่สำเร็จ | มีแล้ว — Arduino Update ตรวจไฟล์ที่เหมาะสมและผล Upload จริง | ☐ |
 | 60 | OTA | Restart หลัง OTA | จบ Update | Device Restart และทำงานด้วย Firmware ใหม่ | มีแล้ว — ตรวจเวอร์ชันและรอบ Tracking หลัง Restart | ☐ |
@@ -83,7 +83,7 @@
 - [ ] **ข้อ 06 — ทดสอบจริง:** ตรวจ Threshold ขาลง/ขาขึ้นและข้าม Deep Sleep ใช้แหล่งจ่ายปลอดภัยตามวงจร ไม่คายประจุแบตต่ำเกินข้อกำหนด
 - [x] **ข้อ 20, 27, 33 — ยืนยันการส่งฝั่ง Firmware:** เลือก confirmed เฉพาะ SOS/Fall; Normal คง unconfirmed ล้าง Pending เมื่อได้ ACK เท่านั้น หากไม่มี ACK หลับ Retry 60 วินาทีหรือเวลารอ LoRaWAN ที่นานกว่า ไม่เพิ่ม Application ACK/NVS ยอมรับพลังงาน/Downlink/ข้อมูลซ้ำที่เพิ่มขึ้น ยังต้องทดสอบรับ ACK และกรณีปิด Gateway บนเครื่องจริง; LoRaWAN ACK ไม่ยืนยันว่า Web Platform สร้าง Alert สำเร็จ
 - [x] **ข้อ 27, 33 — Pending หลังไฟดับ:** ตกลงใช้ RTC ตามเดิม ไม่เพิ่ม NVS สำหรับ Pending SOS/Fall ยังคงเก็บข้าม Deep Sleep และยอมรับว่าเหตุที่ยังส่งไม่สำเร็จอาจหายเมื่อแบตหลุด แบตหมด หรือไฟเลี้ยงขาด การตัดสินใจนี้ไม่ใช่ผลผ่านการทดสอบบนเครื่องจริง และไม่เปลี่ยนเงื่อนไขยืนยันการส่งในข้อก่อนหน้า
-- [ ] **ข้อ 13, 49 — Persistence หลังไฟดับ:** ยืนยันว่าพิกัดเก่า/Low Power ต้องคงหลังถอดแบตหรือไม่
+- [x] **ข้อ 13, 49 — Persistence หลังไฟดับ:** ตกลงใช้ RTC ตามเดิม ไม่เพิ่ม NVS สำหรับพิกัดเก่า/Low Power เก็บข้าม Deep Sleep ได้ ยอมรับว่าหลังถอดแบตพิกัดเก่าหาย ต้องค้นหาใหม่ และ Low Power กลับ OFF (Normal) ต้องส่ง Downlink เปิดใหม่หากต้องการ การตัดสินใจนี้ไม่ใช่ผลผ่านการทดสอบจริง
 - [x] **ข้อ 23 — SOS เหนือ Normal:** Firmware รองรับแล้ว ทั้งการเลือก SOS แทน Normal และการหยุดรอ GNSS เมื่อมี SOS เพื่อใช้พิกัด RTC ส่งเหตุแทน ไม่ต้องเพิ่มโค้ดสำหรับเงื่อนไขนี้; ยังต้องทดสอบบนเครื่องจริงตามแถว 23 ก่อนติ๊กผ่านใน Sheets
 - [x] **ข้อ 25 — SOS ไม่รอพิกัด:** Firmware ใช้พิกัดล่าสุดใน RTC ทันที ไม่เคย Fix ส่ง 0,0 และ gps_fresh=false จึงไม่ใช่งาน Implement ที่ขาดอยู่ ส่วนการส่งพิกัดตามหลัง SOS โดยเฉพาะยังไม่มีและเป็นเพียงทางเลือกเพิ่มเติม ไม่ใช่พฤติกรรมปัจจุบัน; ฝั่ง Application ยังต้องทดสอบว่าไม่แสดง 0,0 เป็นตำแหน่งจริง และช่องผ่านบนเครื่องจริงยังไม่ถูกติ๊ก
 - [ ] **ข้อ 34 — Movement:** ยืนยันความจำเป็นก่อนออกแบบ/Implement
