@@ -11,5 +11,5 @@ constexpr uint32_t gpsTimeoutMs = 30 * 1000;
 constexpr uint32_t batteryTopResistorOhms = 750000;
 constexpr uint32_t batteryBottomResistorOhms = 360000;
 constexpr uint8_t uplinkPort = 2;
-constexpr uint8_t uplinkDataRate = 3; // AS923 SF9/BW125; suitable for a moving tracker.
+constexpr uint8_t uplinkDataRate = 2; // SF10
 }

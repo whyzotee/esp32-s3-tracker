@@ -124,9 +124,15 @@ bool setup_lora_wan_app()
     }
 
     node.setADR(false);
-    // DR3 (SF9/BW125) accommodates the 15-byte payload with AS923 dwell time.
-    if (node.setDatarate(AppConfig::uplinkDataRate) != RADIOLIB_ERR_NONE)
+    // Allow the 15-byte SF10 uplink where local regulations permit no dwell limit.
+    node.setDwellTime(false);
+    // RadioLib validates the requested DR against the session's dwell-time limits.
+    state = node.setDatarate(AppConfig::uplinkDataRate);
+    if (state != RADIOLIB_ERR_NONE) {
+        Serial.printf("[LoRa] Cannot set DR%u: %d; check AS923 dwell-time settings\n",
+                      AppConfig::uplinkDataRate, state);
         return false;
+    }
 
     if (ready) AudioFeedback::play(AudioFeedback::Event::LoRaConnected);
     return ready;
