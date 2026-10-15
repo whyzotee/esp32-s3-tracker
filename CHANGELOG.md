@@ -2,6 +2,19 @@
 
 All notable firmware changes are documented here.
 
+## [Unreleased]
+
+### Changed
+
+- Pin pioarduino 55.03.312-1 (Arduino-ESP32 3.3.12 / ESP-IDF 5.5.5)
+  and RadioLib 7.8.1; require PlatformIO Core 6.2.0 or newer.
+
+### Fixed
+
+- Use the framework's ESP32-S3 IPC stack fix (2048 bytes instead of 1024)
+  to address the suspected cause of the intermittent `ipc1` stack-canary panic.
+  Reject builds with a framework IPC stack smaller than 2048 bytes.
+
 ## [1.2] - 2026-09-25
 
 ### Added

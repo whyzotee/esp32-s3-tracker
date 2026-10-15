@@ -11,6 +11,10 @@
 #include <ota_manager.h>
 #include <app_config.h>
 
+// Check the configuration of the prebuilt framework, not a build-flag override.
+static_assert(CONFIG_ESP_IPC_TASK_STACK_SIZE >= 2048,
+              "Use the pinned Arduino framework with the ESP32-S3 IPC stack fix");
+
 // Both modes use real deep sleep and the same button/radio lifecycle.
 // Debug only shortens the normal interval and enables simulated GPS/logging.
 constexpr bool LORA_DEBUG = false;

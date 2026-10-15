@@ -147,10 +147,19 @@ and radio processing add to the actual time between reports.
 
 ## Pinned library versions
 
-- [RadioLib 7.7.1](https://github.com/jgromes/RadioLib/releases/tag/7.7.1)
+- Arduino-ESP32 3.3.12 / ESP-IDF 5.5.5 via pioarduino 55.03.312-1
+  (PlatformIO Core 6.2.0 or newer). This includes the IPC task stack fix for
+  ESP32-S3; startup compilation checks that the framework uses at least 2048 bytes.
+- [RadioLib 7.8.1](https://github.com/jgromes/RadioLib/releases/tag/7.8.1)
 - [TinyGPSPlus 1.1.0](https://github.com/mikalhart/TinyGPSPlus/blob/master/library.properties)
 
 Exact versions are pinned in `platformio.ini` for reproducible builds.
+
+Before building with an older PlatformIO installation, upgrade its Core:
+
+```bash
+~/.platformio/penv/bin/python -m pip install --upgrade platformio
+```
 
 ## Code layout
 
