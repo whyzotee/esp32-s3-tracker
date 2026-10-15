@@ -91,7 +91,13 @@ bool startAp()
              static_cast<unsigned long long>(mac & 0xFFFFFFULL));
     apName = name;
 
-    WiFi.mode(WIFI_AP);
+    if (!WiFi.mode(WIFI_AP)) return false;
+    const IPAddress apIp(192, 168, 4, 1);
+    const IPAddress subnet(255, 255, 255, 0);
+    if (!WiFi.softAPConfig(apIp, apIp, subnet)) {
+        Serial.println("[OTA] Failed to configure fixed AP IP");
+        return false;
+    }
     if (!WiFi.softAP(apName.c_str(), OtaConfig::apPassword)) return false;
 
     server.on("/", HTTP_GET, handleRoot);
