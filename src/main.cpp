@@ -15,6 +15,7 @@
 #include <ota_manager.h>
 #include <battery.h>
 #include <esp_system.h>
+#include <esp_sleep.h>
 
 // Check the configuration of the prebuilt framework, not a build-flag override.
 static_assert(CONFIG_ESP_IPC_TASK_STACK_SIZE >= 2048,
@@ -57,6 +58,10 @@ void setup()
     // Button initialization can emit logs or enter OTA/shutdown.
     waitForUsbMonitor();
     TrackerApp::beginWatchdog();
+    // Stream FIFO retains only ~3.4s. Inspect a sensor wake before button
+    // debounce/holds, battery measurement, GNSS power-up or a blocking OTAA join.
+    const bool earlyFallSetup = esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT1;
+    if (earlyFallSetup) setup_fall_detection(LORA_DEBUG);
     DeviceButton::begin();
     if (DeviceButton::startedFromPowerOff()) lora_forget_rtc_session();
     if (DeviceButton::otaPending()) OtaManager::run(AppConfig::reportIntervalMs);
@@ -68,7 +73,7 @@ void setup()
     DebugMode::begin(LORA_DEBUG, LORA_DEBUG_INTERVAL_MS);
     DeepSleep::logWakeReason();
     Battery::bootReading();
-    setup_fall_detection(LORA_DEBUG);
+    if (!earlyFallSetup) setup_fall_detection(LORA_DEBUG);
     if (!LORA_DEBUG) {
         setup_gnss(GNSS_DEBUG);
     }

@@ -94,23 +94,25 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    A[ADXL362 วัดต่อเนื่องที่ 100 Hz] --> B{แรงต่ำกว่า 375 mg<br/>นาน 150 ms หรือไม่}
+    A[ADXL362 วัดต่อเนื่องที่ 50 Hz ±8g<br/>เก็บ FIFO ล่าสุดประมาณ 3.4 วินาที] --> B{แต่ละแกนต่ำกว่าเกณฑ์ประมาณ 375 mg<br/>นาน 160 ms หรือไม่}
     B -- ไม่ใช่ --> A
     B -- ใช่ --> C[ADXL362 latch INT1 สูง]
     C --> D{MCU อยู่ deep sleep หรือไม่}
     D -- ใช่ --> E[EXT1 GPIO7 ปลุก MCU]
-    D -- ไม่ใช่ --> F[update_fall_detection อ่าน STATUS]
-    E --> G[setup_fall_detection เก็บ event ที่ latch]
-    F --> H[pending = true]
-    G --> H
+    D -- ไม่ใช่ --> F[update_fall_detection อ่าน FIFO]
+    E --> G[อ่าน FIFO ก่อนตั้งค่าเซ็นเซอร์ใหม่]
+    F --> Q{ขนาดเวกเตอร์ต่ำกว่า 375 mg นาน 160 ms<br/>แล้วกระแทกอย่างน้อย 3g ภายใน 1 วินาทีหรือไม่}
+    G --> Q
+    Q -- ไม่ใช่ --> A
+    Q -- ใช่ --> H[pending = true]
     H --> I[เล่นเสียง Fall หนึ่งครั้ง]
     I --> J[สร้าง telemetry status=2<br/>ใช้พิกัด RTC cached]
     J --> K[ส่ง uplink FPort 2]
-    K --> L{ส่งสำเร็จและ save session สำเร็จหรือไม่}
+    K --> L{ได้รับ LoRaWAN ACK<br/>และ save session สำเร็จหรือไม่}
     L -- ใช่ --> M[clear pending fall]
     L -- ไม่ใช่ --> N[คง pending fall]
     M --> O[deep sleep ตาม interval ปกติ]
-    N --> P[deep sleep retry 15 วินาที]
+    N --> P[deep sleep retry อย่างน้อย 60 วินาที<br/>ตามข้อจำกัดวิทยุ]
     P --> J
 ```
 
@@ -355,9 +357,13 @@ constexpr bool GNSS_DEBUG = true;
 
 - วาง/ปล่อยอุปกรณ์ลงบนวัสดุนุ่มหรือ padded fixture เท่านั้น
 - ห้ามทดสอบโดยปล่อยอุปกรณ์ใส่คนหรือพื้นแข็ง
-- ADXL362 จะมองหาแรงต่ำกว่า 375 mg ต่อเนื่อง 150 ms
-- เหตุการณ์นี้เป็น **suspected fall/free-fall** ไม่ใช่ human-fall classifier แบบสมบูรณ์
-- เมื่อ deep sleep, INT1 ของ ADXL362 สามารถปลุก MCU ได้ และ firmware จะส่ง `status=2`
+- ADXL362 ตั้งช่วงวัด ±8g ที่ 50 Hz และปลุก MCU เมื่อแต่ละแกนต่ำกว่าเกณฑ์ประมาณ 375 mg ต่อเนื่อง 160 ms
+- Firmware ตรวจข้อมูล FIFO ย้อนหลัง: ขนาดเวกเตอร์ความเร่งไม่เกิน 375 mg อย่างน้อย 8 ตัวอย่าง แล้วเกิดแรงกระแทกอย่างน้อย 3g ภายใน 1 วินาที จึงตั้ง `status=2` และเล่นเสียง Fall
+- ช่วงตกอย่างเดียว แรงกระแทกอย่างเดียว หรือกระแทกก่อนตก ไม่สร้าง Fall Event ไม่บังคับว่าต้องนิ่งหลังเหตุการณ์
+- ค่าปรับอยู่ใน `include/fall_detection.h`: `FALL_THRESHOLD_MG`, `FALL_DURATION_SAMPLES`, `FALL_IMPACT_MG`, `FALL_IMPACT_WINDOW_MS` ค่าเริ่มต้นยังต้องทดสอบตามวิธีสวมใส่จริง
+- เหตุการณ์นี้ยังเป็น **suspected fall** ไม่ใช่ human-fall classifier ที่ผ่านการรับรอง อุปกรณ์ตกพื้นเองและการเคลื่อนไหวแรงบางชนิดอาจเข้าเงื่อนไขได้ การล้มเบาหรือกระแทกวัสดุนุ่มอาจไม่เข้าเงื่อนไข
+- FIFO เก็บ XYZ ล่าสุดประมาณ 3.4 วินาที และอ่านก่อนตั้งค่าใหม่เมื่อปลุกจาก INT1 หาก MCU บล็อกนานกว่านั้น เช่น ระหว่าง Join/ส่งวิทยุ ข้อมูลเหตุการณ์เก่าอาจถูกทับจนพลาดการตรวจจับได้
+- ควรทดสอบเดิน วิ่ง แกว่งมือ และทดสอบเหตุจำลองด้วย fixture ทั้งขณะตื่นและหลับ ไม่ให้คนล้มจริง ไม่เพิ่มความแข็งของพื้นเพื่อให้ถึง threshold
 
 ### 5.6 Low Power Mode จาก downlink
 

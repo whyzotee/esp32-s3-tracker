@@ -265,7 +265,7 @@ The `decodeUplink(input)` interface follows [The Things Stack documentation](htt
 
 | Byte offset (zero-based) | Data |
 | --- | --- |
-| 0 | Status: 0 = normal, 1 = SOS button hold, 2 = free-fall detected / suspected fall |
+| 0 | Status: 0 = normal, 1 = SOS, 2 = low acceleration followed by impact / suspected fall |
 | 1–4 | Latitude: float32 little-endian |
 | 5–8 | Longitude: float32 little-endian |
 | 9 | Flags: bit 0 = fresh GNSS fix, bit 1 = low-power mode, bit 2 = debug simulation, bit 4 = valid battery reading |
@@ -363,7 +363,7 @@ Expected `data` output:
 ```
 
 `Fall Detected` retains the original event name for compatibility, but indicates
-a suspected fall based on free-fall, not a confirmed human fall. This script omits
+a suspected fall based on low acceleration followed by impact, not a confirmed human fall. This script omits
 the original decoder's `altitude: 10` because the firmware does not transmit altitude.
 With debug enabled, coordinates are simulated. `flags.debug_simulation` identifies
 them. Button/fall events may use previously cached coordinates rather than a fresh

@@ -39,7 +39,7 @@
 | 29 | Accelerometer | อ่านค่าความเร่ง | เคลื่อนย้ายอุปกรณ์ | อ่านค่า X/Y/Z ได้ | มีแล้ว — ตรวจ Debug และทิศแกนตามการติดตั้งจริง | ☐ |
 | 30 | Accelerometer | Interrupt | ทำให้เกิด Event ตาม Threshold | INT สามารถกระตุ้น MCU ได้ | มีแล้ว — INT1 GPIO7 ตรวจการอ่าน/ล้าง Interrupt latch | ☐ |
 | 31 | Accelerometer | Wake from Sleep | ทำ Event ขณะ MCU Deep Sleep | MCU ตื่นจาก Accelerometer Interrupt | มีแล้ว — ต้องทดสอบซ้ำหลังแก้ LoRa SPI แม้ Sensor ใช้คนละบัส | ☐ |
-| 32 | Accelerometer | Suspected Fall | จำลอง Free-fall/เหตุที่กำหนด | Firmware สร้าง Suspected Fall Event | มีข้อจำกัด — ตรวจ Free-fall ไม่ยืนยันการล้มมนุษย์ทุกแบบ ใช้ Fixture รองรับแรงกระแทก ไม่ให้คนล้มจริง | ☐ |
+| 32 | Accelerometer | Suspected Fall | จำลอง Free-fall/เหตุที่กำหนด | Firmware สร้าง Suspected Fall Event | เพิ่มตัวกรอง FIFO: เวกเตอร์ ≤375mg นาน 160ms แล้วกระแทก ≥3g ภายใน 1s; ±8g/50Hz อ่านย้อนหลังตอนปลุก ก่อนเสียง/ส่ง status=2 ต้องทดสอบเดิน/วิ่ง/แกว่งมือ/fixture ขณะตื่นและหลับ ยังแยกคนล้มกับอุปกรณ์ตกไม่ได้ FIFO ~3.4s อาจสูญข้อมูลเมื่อ MCU บล็อกนาน | ☐ |
 | 33 | Accelerometer | Pending Fall | ทำให้ส่ง Event ไม่สำเร็จ | Event ถูกเก็บไว้ส่งใหม่รอบถัดไป | มีแล้ว — ใช้ confirmed ล้าง Pending เฉพาะเมื่อได้ LoRaWAN ACK; ไม่มี ACK หลับแล้ว Retry เก็บ RTC ไม่เพิ่ม NVS ยอมรับว่าสูญหายเมื่อไฟเลี้ยงขาด ACK ไม่ยืนยัน Backend | ☐ |
 | 34 | Motion / Stationary | Movement Detection | เคลื่อนไหวอุปกรณ์ | ระบบสามารถระบุสถานะการเคลื่อนไหวได้ | ยังไม่มี — ยืนยันความจำเป็น แล้วกำหนดเงื่อนไข/สถานะ Movement แยกจาก Free-fall | ☐ |
 | 35 | Motion / Stationary | Stationary Detection* | วางอุปกรณ์นิ่งตามเวลาที่กำหนด | สร้างสถานะ Inactivity/Stationary ตาม Logic | ยังไม่มี — ยืนยันความจำเป็น แล้วกำหนดเวลานิ่งและ Event | ☐ |
