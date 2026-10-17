@@ -31,8 +31,9 @@ public:
     inline static std::map<std::string, std::vector<uint8_t>> store;
     inline static unsigned writes = 0;
     inline static bool failWrites = false;
-    bool begin(const char*, bool) { return true; }
-    void end() {}
+    bool opened = false;
+    bool begin(const char*, bool) { if (opened) return false; opened = true; return true; }
+    void end() { opened = false; }
     bool isKey(const char* key) { return store.find(key) != store.end(); }
     size_t getBytesLength(const char* key) {
         auto it = store.find(key);

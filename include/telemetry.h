@@ -6,8 +6,11 @@ namespace TelemetryFlags {
 constexpr uint8_t gpsFresh = 1 << 0;
 constexpr uint8_t lowPowerMode = 1 << 1;
 constexpr uint8_t debugSimulation = 1 << 2;
+constexpr uint8_t initialFixReady = 1 << 3;
 constexpr uint8_t batteryValid = 1 << 4;
 constexpr uint8_t lowBattery = 1 << 5;
+constexpr uint8_t tripActive = 1 << 6;
+constexpr uint8_t offRoute = 1 << 7;
 }
 
 struct Telemetry {

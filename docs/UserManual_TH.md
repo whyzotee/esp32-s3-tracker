@@ -1,5 +1,9 @@
 # Tracker Firmware
 
+> Flow ทริปรุ่นใหม่และสัญญาข้อมูลล่าสุดอยู่ที่ [README — Trip flow](../README.md#trip-flow-and-application-commands)
+> รุ่นนี้เริ่ม soft-off, รอ Start/End ผ่าน FPort 11, ส่ง confirmed ทุก uplink และเพิ่ม status 3/4
+> รายละเอียด flow/เสียงเดิมด้านล่างยังไม่ได้ปรับทุกแผนภาพให้ตรงรุ่นใหม่นี้
+
 เอกสารนี้จัดทำจากการอ่านโค้ดใน `src/`, `include/` และค่าการ build ใน
 `platformio.ini` โดยตรง ไม่อ้างพฤติกรรมจากเอกสาร Markdown เดิม Firmware
 ปัจจุบันที่ระบุใน `include/tracker_app.h` คือ **v1.3**
@@ -86,7 +90,7 @@ flowchart TD
     I -- ใช่ --> J[clear pendingSos]
     I -- ไม่ใช่ --> K[คง pendingSos]
     J --> L[deep sleep ตาม interval ปกติ]
-    K --> M[deep sleep retry 15 วินาที]
+    K --> M[deep sleep retry อย่างน้อย 60 วินาที<br/>ตามข้อจำกัดวิทยุ]
     M --> F
 ```
 

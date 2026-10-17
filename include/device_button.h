@@ -26,4 +26,5 @@ void acknowledgeOta();
 // True only for this boot when the user explicitly turned the device back on
 // after selecting Power Off. This is intentionally distinct from a timer wake.
 bool startedFromPowerOff();
+[[noreturn]] void powerOff();
 }

@@ -13,9 +13,10 @@ struct LoRaResult {
     size_t downlinkLength;
     uint8_t downlink[255];
 
-    // An unrelated downlink is not an ACK for an urgent uplink.
+    // All uplinks are confirmed; an unrelated downlink is not an ACK.
     bool delivered(uint8_t status) const {
-        return code >= 0 && (!(status == 1 || status == 2) || acknowledged);
+        (void)status;
+        return code >= 0 && acknowledged;
     }
 };
 

@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <audio_feedback.h>
 #include <tracker_app.h>
 #include <battery.h>
 #include <board_pins.h>
@@ -14,6 +15,7 @@
 #include <ota_manager.h>
 #include <power_mode.h>
 #include <telemetry.h>
+#include <trip_control.h>
 #include <esp_timer.h>
 #include <esp_task_wdt.h>
 #include <mutex>
@@ -45,6 +47,8 @@ void feedTrackingWatchdog(void *)
 
 uint32_t reportInterval()
 {
+    if (TripControl::phase() != TripControl::Phase::Travelling)
+        return AppConfig::reportIntervalMs;
     if (PowerMode::enabled()) return PowerMode::reportInterval();
     return DebugMode::enabled() ? DebugMode::interval() : PowerMode::reportInterval();
 }
@@ -56,11 +60,32 @@ uint32_t reportInterval()
     while (true) delay(1000);
 }
 
-[[noreturn]] void sleepFor(uint32_t durationMs, uint32_t minimumMs = 0)
+void sleepFor(uint32_t durationMs, uint32_t minimumMs = 0)
 {
     DeviceButton::service();
     if (DeviceButton::otaPending()) startOtaIfRequested();
-    DeepSleep::timed(durationMs, minimumMs);
+    TripControl::refreshAudio();
+    if (!TripControl::keepAwake()) DeepSleep::timed(durationMs, minimumMs);
+    // Continuous sound needs an awake MCU. Never bypass the radio wait.
+    const uint32_t waitMs = max(durationMs, minimumMs);
+    Serial.printf("[WAIT] Awake for %lu ms; trip/alarm/ACK feedback active\n",
+                  static_cast<unsigned long>(waitMs));
+    const uint32_t started = millis();
+    uint32_t heartbeat = started;
+    while (uint32_t(millis() - started) < waitMs) {
+        DeviceButton::service();
+        if (DeviceButton::otaPending()) startOtaIfRequested();
+        update_fall_detection(false);
+        TripControl::refreshAudio();
+        // Renew only from the progressing main loop, never a timer callback.
+        if (uint32_t(millis() - heartbeat) >= 60000) {
+            TrackerApp::endWatchdog();
+            TrackerApp::beginWatchdog();
+            heartbeat = millis();
+        }
+        delay(10);
+    }
+    TrackerApp::endWatchdog();
 }
 
 void handleDownlink(const LoRaResult &result)
@@ -75,7 +100,13 @@ void handleDownlink(const LoRaResult &result)
         Serial.println("[APP] No application payload; no Low Power command applied");
         return;
     }
-    if (PowerMode::handleDownlink(result.downlinkPort, result.downlink, result.downlinkLength)) {
+    if (TripControl::handleDownlink(result.downlinkPort, result.downlink, result.downlinkLength)) {
+        Serial.printf("[TRIP] Command=%u phase=%u initial_fix=%s off_route=%s\n",
+                      result.downlink[0], unsigned(TripControl::phase()),
+                      TripControl::initialFixReady() ? "yes" : "no",
+                      TripControl::offRoute() ? "yes" : "no");
+        if (TripControl::endRequested()) DeviceButton::powerOff();
+    } else if (PowerMode::handleDownlink(result.downlinkPort, result.downlink, result.downlinkLength)) {
         Serial.printf("[APP] Low Power %s: interval %lu ms (RTC only)\n",
                       PowerMode::enabled() ? "enabled" : "disabled",
                       static_cast<unsigned long>(reportInterval()));
@@ -83,6 +114,29 @@ void handleDownlink(const LoRaResult &result)
         Serial.printf("[APP] Ignored downlink: port=%u bytes=%u\n",
                       result.downlinkPort, unsigned(result.downlinkLength));
     }
+}
+}
+
+namespace {
+uint8_t nextStatus()
+{
+    if (fall_detection_pending()) return 2;
+    if (DeviceButton::sosPending()) return 1;
+    if (TripControl::wellbeingPending()) return 3;
+    return TripControl::phase() == TripControl::Phase::Travelling ? 0 : 4;
+}
+
+Telemetry makeSample(uint8_t status, bool debug)
+{
+    if (status == 4 && TripControl::initialFixReady() && !debug) {
+        Telemetry sample = read_telemetry(3); // Cached coordinates, no fix wait.
+        sample.status = 4;
+        return sample;
+    }
+    Telemetry sample = debug ? DebugMode::walking_sample(status) : read_telemetry(status);
+    if (debug || (sample.flags & TelemetryFlags::gpsFresh) != 0)
+        TripControl::markInitialFix();
+    return sample;
 }
 }
 
@@ -116,7 +170,7 @@ void endWatchdog()
     trackingUser = nullptr;
 }
 
-[[noreturn]] void runCycle()
+void runCycle()
 {
     beginWatchdog(); // Idempotent: setup already armed it before peripheral init.
     DeviceButton::service();
@@ -124,32 +178,38 @@ void endWatchdog()
     const bool debug = DebugMode::enabled();
     update_fall_detection(debug);
     DebugMode::update(fall_detection_pending());
+    TripControl::setAcknowledged(false); // A new work/TX cycle is in progress.
+    TripControl::refreshAudio();
 
     if (!setup_lora_wan_app()) {
         DebugMode::message("LoRa init/join failed");
-        sleepFor(AppConfig::retryInitialMs);
+        TripControl::setAcknowledged(false);
+        return sleepFor(AppConfig::retryInitialMs);
     }
     if (DeviceButton::otaPending()) startOtaIfRequested();
     if (lora_wait_ms() > 0)
-        sleepFor(max(uint32_t(1000), lora_wait_ms()), lora_wait_ms());
+        return sleepFor(max(uint32_t(1000), lora_wait_ms()), lora_wait_ms());
 
-    const uint8_t status = fall_detection_pending() ? 2 : (DeviceButton::sosPending() ? 1 : 0);
-    Telemetry sample = debug ? DebugMode::walking_sample(status) : read_telemetry(status);
+    Telemetry sample = makeSample(nextStatus(), debug);
 
     // Acquisition can block. Capture events that arrived before transmitting.
-    update_fall_detection(false);
     DeviceButton::service();
+    update_fall_detection(false);
     if (DeviceButton::otaPending()) startOtaIfRequested();
     // An event may arrive while normal telemetry is waiting for GNSS. Rebuild
     // from RTC-cached coordinates so the urgent packet cannot retain a 0,0
     // normal sample with only its status byte changed.
-    if (fall_detection_pending() && sample.status != 2)
-        sample = read_telemetry(2);
-    else if (DeviceButton::sosPending() && sample.status != 1)
-        sample = read_telemetry(1);
+    if (sample.status == 4 && nextStatus() == 0)
+        sample.status = 0; // Initial fix completed a previously queued Start.
+    else if (nextStatus() != sample.status)
+        sample = makeSample(nextStatus(), debug);
 
     if (PowerMode::enabled()) sample.flags |= TelemetryFlags::lowPowerMode;
     if (debug) sample.flags |= TelemetryFlags::debugSimulation;
+    if (TripControl::initialFixReady()) sample.flags |= TelemetryFlags::initialFixReady;
+    if (TripControl::phase() == TripControl::Phase::Travelling)
+        sample.flags |= TelemetryFlags::tripActive;
+    if (TripControl::offRoute()) sample.flags |= TelemetryFlags::offRoute;
     const BatteryReading battery = Battery::bootReading();
     sample.batteryMv = battery.millivolts;
     sample.batteryPercent = battery.percent;
@@ -160,12 +220,19 @@ void endWatchdog()
     Serial.printf("[TX] LAT: %.6f, LON: %.6f, STATUS: %u\n",
                   sample.lat, sample.lon, sample.status);
 
+    const uint32_t sentRevision = TripControl::revision();
     const LoRaResult result = send_lora_telemetry(sample);
     DebugMode::result(result.code);
+    TripControl::setAcknowledged(result.acknowledged);
+    if (result.acknowledged && !TripControl::alarmActive() && !TripControl::offRoute()) {
+        AudioFeedback::silence();
+        AudioFeedback::playAndWait(AudioFeedback::Event::LoRaConnected);
+    }
     handleDownlink(result);
-    if (result.delivered(sample.status)) {
+    if (result.delivered(sample.status) && TripControl::revision() == sentRevision) {
         if (sample.status == 2) acknowledge_fall_detection();
         if (sample.status == 1) DeviceButton::acknowledgeSos();
+        if (sample.status == 3) TripControl::acknowledgeWellbeing(sentRevision);
     }
 
     const uint32_t interval = !result.delivered(sample.status) || !result.sessionSaved

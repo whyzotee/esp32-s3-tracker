@@ -27,27 +27,6 @@ constexpr bool LORA_DEBUG = false;
 constexpr uint32_t LORA_DEBUG_INTERVAL_MS = 15000;
 // Echo raw NMEA for GNSS diagnostics; this does not disable acquisition timeouts.
 constexpr bool GNSS_DEBUG = false;
-// Wait only on power-on / external RESET, never on deep-sleep wake or crash reset.
-// The EN reset button can report POWERON, so it cannot be separated from power-on.
-// This is independent of LORA_DEBUG so real GNSS/sleep behavior can be tested.
-constexpr bool USB_MONITOR_WAIT = true;
-constexpr uint32_t USB_MONITOR_WAIT_MS = 5000;
-
-namespace {
-void waitForUsbMonitor()
-{
-#if ARDUINO_USB_CDC_ON_BOOT
-    if (!USB_MONITOR_WAIT) return;
-    const esp_reset_reason_t reason = esp_reset_reason();
-    if (reason != ESP_RST_POWERON && reason != ESP_RST_EXT) return;
-    const uint32_t started = millis();
-    while (!Serial && millis() - started < USB_MONITOR_WAIT_MS) {
-        delay(10);
-    }
-    if (Serial) delay(100); // Let the host finish opening the reconnected port.
-#endif
-}
-}
 
 void setup()
 {
@@ -55,8 +34,6 @@ void setup()
     setCpuFrequencyMhz(80);
     Board::begin();
     AudioFeedback::begin();
-    // Button initialization can emit logs or enter OTA/shutdown.
-    waitForUsbMonitor();
     TrackerApp::beginWatchdog();
     // Stream FIFO retains only ~3.4s. Inspect a sensor wake before button
     // debounce/holds, battery measurement, GNSS power-up or a blocking OTAA join.

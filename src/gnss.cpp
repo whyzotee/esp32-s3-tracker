@@ -3,6 +3,7 @@
 #include <device_button.h>
 #include <tracker_app.h>
 #include <fall_detection.h>
+#include <trip_control.h>
 
 TinyGPSPlus GPS;
 
@@ -145,7 +146,7 @@ bool get_location()
         DeviceButton::service();
         update_fall_detection(false);
         if (DeviceButton::sosPending() || DeviceButton::otaPending() ||
-            fall_detection_pending()) return false;
+            fall_detection_pending() || TripControl::wellbeingPending()) return false;
         while (Serial1.available())
         {
             const char byte = static_cast<char>(Serial1.read());

@@ -9,7 +9,7 @@ const signature = 'LoRaResult send_lora_telemetry(const Telemetry &sample)';
 const start = source.indexOf(signature);
 if (start < 0) throw new Error('Missing send function');
 const app = fs.readFileSync(path.join(root, 'src/tracker_app.cpp'), 'utf8');
-if (!app.includes('if (result.delivered(sample.status))') ||
+if (!app.includes('if (result.delivered(sample.status) && TripControl::revision() == sentRevision)') ||
     !app.includes('!result.delivered(sample.status) || !result.sessionSaved'))
     throw new Error('Pending clearing and retry must both use delivery policy');
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tracker-confirmed-'));
@@ -52,16 +52,15 @@ void encode_telemetry(const Telemetry&, uint8_t* payload) {
 }
 ${source.slice(start)}
 int main() {
-    for (uint8_t status : {uint8_t(0), uint8_t(1), uint8_t(2)}) {
+    for (uint8_t status : {uint8_t(0), uint8_t(1), uint8_t(2), uint8_t(3), uint8_t(4)}) {
         for (int16_t code : {int16_t(-4), int16_t(0), int16_t(1), int16_t(2)}) {
             for (bool ack : {false, true}) {
                 ready=true; node={}; storage={}; node.code=code; node.ack=ack;
                 Telemetry sample{}; sample.status=status;
                 auto result=send_lora_telemetry(sample);
-                const bool urgent=status!=0;
-                assert(node.confirmed==urgent && node.sends==1);
-                assert(result.acknowledged==(urgent && code>0 && ack));
-                assert(result.delivered(status)==(urgent ? code>0 && ack : code>=0));
+                assert(node.confirmed && node.sends==1);
+                assert(result.acknowledged==(code>0 && ack));
+                assert(result.delivered(status)==(code>0 && ack));
                 assert(result.downlinkLength==(code>0 ? 1u : 0u));
                 assert(storage.saves==1); // Save counters even when ACK is missing.
             }
@@ -79,7 +78,7 @@ int main() {
     const binary = path.join(dir, 'test');
     cp.execFileSync('c++', ['-std=c++17', '-I', path.join(root, 'include'), path.join(dir, 'test.cpp'), '-o', binary]);
     cp.execFileSync(binary);
-    console.log('Normal unconfirmed, SOS/Fall confirmed, ACK gating and counter-save tests passed');
+    console.log('All uplinks confirmed, ACK gating and counter-save tests passed');
 } finally {
     fs.rmSync(dir, { recursive: true, force: true });
 }

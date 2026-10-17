@@ -1,7 +1,6 @@
 #include <Arduino.h>
 #include <RadioLib.h>
 #include <SPI.h>
-#include <audio_feedback.h>
 #include <tracker_app.h>
 #include <board_pins.h>
 #include <battery.h>
@@ -85,12 +84,15 @@ uint32_t lora_wait_ms()
 
 void lora_forget_rtc_session()
 {
+    ready = false;
     LoRaStorage::clearRtcSession();
     Serial.println("[LoRa] User power cycle: RTC session cleared; OTAA join required");
 }
 
 bool setup_lora_wan_app()
 {
+    // Awake trip/alarm loops keep the live MAC and its airtime timer intact.
+    if (ready) return true;
     ready = false;
     buildIdentity();
 
@@ -135,16 +137,13 @@ bool setup_lora_wan_app()
     {
         Serial.printf("[LoRa] Initiating OTAA Join (DevEUI: %016llX)...\n",
                       (unsigned long long)LoRaCredentials::devEui);
-        AudioFeedback::startLoop(AudioFeedback::Event::LoRaJoining);
         if (!storage.reserveJoin(node))
         {
             Serial.println("[LoRa] Failed to reserve DevNonce; aborting join");
-            AudioFeedback::stopLoop(AudioFeedback::Event::LoRaJoining);
             return false;
         }
 
         state = node.activateOTAA();
-        AudioFeedback::stopLoop(AudioFeedback::Event::LoRaJoining);
         if (state == RADIOLIB_LORAWAN_NEW_SESSION)
         {
             Serial.println("[LoRa] OTAA Join successful (new session)");
@@ -177,7 +176,6 @@ bool setup_lora_wan_app()
         return false;
     }
 
-    if (ready) AudioFeedback::play(AudioFeedback::Event::LoRaConnected);
     return ready;
 }
 
@@ -199,7 +197,7 @@ LoRaResult send_lora_telemetry(const Telemetry &sample)
         return result;
     }
 
-    const bool confirmed = sample.status == 1 || sample.status == 2;
+    const bool confirmed = true; // Every uplink requests network QoS feedback.
     Serial.printf("[LoRa] TX port=%u bytes=%u FCnt=%lu status=%u confirmed=%s\n",
                   AppConfig::uplinkPort, unsigned(sizeof(payload)),
                   (unsigned long)LoRaStorage::nextCounter(node), sample.status,
@@ -222,7 +220,7 @@ LoRaResult send_lora_telemetry(const Telemetry &sample)
                   result.code);
     if (confirmed)
         Serial.printf("[LoRa] Uplink ACK: %s\n",
-                      result.acknowledged ? "received" : "missing; event remains pending");
+                      result.acknowledged ? "received" : "missing; retry required");
     return result;
 }
 

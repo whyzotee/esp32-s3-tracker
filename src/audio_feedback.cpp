@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <audio_feedback.h>
 #include <board_pins.h>
+#include <atomic>
 
 namespace {
 struct Note {
@@ -24,10 +25,10 @@ constexpr Note powerOff[] = {
     {2637, 80, 45}, {2093, 80, 45}, {1568, 180, 0},
 };
 constexpr Note sos[] = {
-    {2900, 130, 90}, {2900, 130, 90}, {2900, 130, 0},
+    {2900, 130, 90}, {2900, 130, 90}, {2900, 130, 1500},
 };
 constexpr Note fall[] = {
-    {3300, 160, 70}, {3300, 160, 70}, {3300, 160, 70}, {3300, 320, 0},
+    {3300, 160, 70}, {3300, 160, 70}, {3300, 160, 70}, {3300, 320, 1500},
 };
 constexpr Note loraJoining[] = {
     {1200, 100, 60}, {1200, 100, 2000},
@@ -69,8 +70,19 @@ Melody melodyFor(AudioFeedback::Event event)
 QueueHandle_t eventQueue = nullptr;
 SemaphoreHandle_t buzzerLock = nullptr;
 bool buzzerAttached = false;
-volatile bool loopEnabled = false;
-AudioFeedback::Event loopEvent = AudioFeedback::Event::LoRaJoining;
+std::atomic<bool> loopEnabled{false};
+std::atomic<AudioFeedback::Event> loopEvent{AudioFeedback::Event::LoRaJoining};
+std::atomic<uint32_t> audioGeneration{0};
+
+bool waitNote(uint32_t durationMs, uint32_t generation)
+{
+    const uint32_t started = millis();
+    while (uint32_t(millis() - started) < durationMs) {
+        if (audioGeneration.load() != generation) return false;
+        delay(5);
+    }
+    return audioGeneration.load() == generation;
+}
 
 void stopBuzzer()
 {
@@ -88,6 +100,7 @@ void playMelody(AudioFeedback::Event event)
     const Melody melody = melodyFor(event);
     if (!melody.notes || !buzzerLock) return;
     xSemaphoreTake(buzzerLock, portMAX_DELAY);
+    const uint32_t generation = audioGeneration.load();
     if (!ledcAttach(Board::buzzer, melody.notes[0].hz, 10)) {
         Serial.println("[AUDIO] Failed to attach buzzer LEDC");
         xSemaphoreGive(buzzerLock);
@@ -97,9 +110,9 @@ void playMelody(AudioFeedback::Event event)
     for (uint8_t i = 0; i < melody.count; ++i) {
         const Note &note = melody.notes[i];
         ledcWriteTone(Board::buzzer, note.hz);
-        delay(note.onMs);
+        if (!waitNote(note.onMs, generation)) break;
         ledcWriteTone(Board::buzzer, 0);
-        if (note.offMs) delay(note.offMs);
+        if (note.offMs && !waitNote(note.offMs, generation)) break;
     }
     stopBuzzer();
     xSemaphoreGive(buzzerLock);
@@ -144,10 +157,12 @@ void play(Event event)
 
 void startLoop(Event event)
 {
+    if (loopEnabled && loopEvent == event) return;
     const Melody melody = melodyFor(event);
     if (!melody.notes || !eventQueue) return;
     loopEvent = event;
     loopEnabled = true;
+    ++audioGeneration;
     xQueueReset(eventQueue);
     if (xQueueSend(eventQueue, &event, 0) == pdTRUE)
         Serial.printf("[AUDIO] %s melody loop started\n", melody.name);
@@ -157,6 +172,7 @@ void stopLoop(Event event)
 {
     if (!loopEnabled || loopEvent != event) return;
     loopEnabled = false;
+    ++audioGeneration;
     if (eventQueue) xQueueReset(eventQueue);
     Serial.printf("[AUDIO] %s melody loop stopped\n", melodyFor(event).name);
 }
@@ -172,6 +188,7 @@ void silence()
 {
     if (!buzzerLock) return;
     loopEnabled = false;
+    ++audioGeneration;
     if (eventQueue) xQueueReset(eventQueue);
     xSemaphoreTake(buzzerLock, portMAX_DELAY);
     stopBuzzer();

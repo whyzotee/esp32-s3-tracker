@@ -1,6 +1,7 @@
 #include <fall_detection.h>
 #include <SPI.h>
 #include <audio_feedback.h>
+#include <trip_control.h>
 #include <driver/rtc_io.h>
 #include <math.h>
 
@@ -236,7 +237,8 @@ void update_fall_detection(bool debug)
 
     if (pending && !fallBuzzerPlayed) {
         fallBuzzerPlayed = true;
-        AudioFeedback::play(AudioFeedback::Event::Fall);
+        TripControl::raiseAlarm();
+        TripControl::refreshAudio();
         Serial.println("[FALL] EVENT DETECTED; alert tone active");
     }
 }

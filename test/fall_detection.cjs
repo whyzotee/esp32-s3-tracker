@@ -6,6 +6,13 @@ const path = require('path');
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'adxl362-test-'));
 const root = path.resolve('.');
 fs.mkdirSync(path.join(dir, 'driver'));
+fs.writeFileSync(path.join(dir, 'trip_control.h'), `
+#pragma once
+namespace TripControl {
+inline void raiseAlarm() { ++toneCalls; }
+inline void refreshAudio() {}
+}
+`);
 fs.writeFileSync(path.join(dir, 'audio_feedback.h'), `
 #pragma once
 namespace AudioFeedback {

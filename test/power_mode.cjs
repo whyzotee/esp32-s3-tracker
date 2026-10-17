@@ -17,7 +17,7 @@ int main() {
     const uint8_t legacy[] = {0x01};
     const uint8_t extra[] = {0x01, 0x00, 0x0F, 0x00};
     assert(!PowerMode::enabled());
-    assert(PowerMode::reportInterval() == 900000);
+    assert(PowerMode::reportInterval() == AppConfig::reportIntervalMs);
     assert(!PowerMode::handleDownlink(2, enable, sizeof(enable)));
     assert(!PowerMode::handleDownlink(10, unknown, sizeof(unknown)));
     assert(!PowerMode::handleDownlink(10, legacy, sizeof(legacy)));
@@ -27,17 +27,17 @@ int main() {
     assert(!PowerMode::enabled());
     assert(PowerMode::handleDownlink(10, enable, sizeof(enable)));
     assert(PowerMode::enabled());
-    assert(PowerMode::reportInterval() == 3600000);
+    assert(PowerMode::reportInterval() == AppConfig::lowPowerIntervalMs);
     assert(PowerMode::handleDownlink(10, enable, sizeof(enable)));
     assert(!PowerMode::handleDownlink(10, unknown, sizeof(unknown)));
-    assert(PowerMode::reportInterval() == 3600000);
+    assert(PowerMode::reportInterval() == AppConfig::lowPowerIntervalMs);
     assert(PowerMode::handleDownlink(10, disable, sizeof(disable)));
     assert(!PowerMode::enabled());
-    assert(PowerMode::reportInterval() == 900000);
+    assert(PowerMode::reportInterval() == AppConfig::reportIntervalMs);
     assert(PowerMode::handleDownlink(10, disable, sizeof(disable)));
     // Simulate a cold boot reinitializing RTC data.
     lowPowerMarker = 0;
-    assert(PowerMode::reportInterval() == 900000);
+    assert(PowerMode::reportInterval() == AppConfig::reportIntervalMs);
 }
 `);
     const binary = path.join(dir, 'test');

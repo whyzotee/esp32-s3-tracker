@@ -56,10 +56,10 @@ void logWakeReason()
     // Keep pending events in RTC and retry by timer if EXT1 cannot be armed.
     if (!prepare_fall_detection_sleep()) {
         esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_EXT1);
-        durationMs = min(durationMs, AppConfig::eventRetryMs);
+        durationMs = min(durationMs, AppConfig::retryInitialMs);
     }
     if (DeviceButton::sosPending())
-        durationMs = min(durationMs, AppConfig::eventRetryMs);
+        durationMs = min(durationMs, AppConfig::retryInitialMs);
     durationMs = max(durationMs, minimumMs);
     armButton();
     esp_sleep_enable_timer_wakeup(uint64_t(durationMs) * 1000);

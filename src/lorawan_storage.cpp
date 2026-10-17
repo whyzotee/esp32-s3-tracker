@@ -66,6 +66,8 @@ bool LoRaStorage::persistNonces(const Record &record)
 
 LoRaStorage::Restore LoRaStorage::begin(LoRaWANNode &node, const uint8_t identity[32])
 {
+    // Join failures now retry while awake, using the same storage instance.
+    nvs.end();
     if (!nvs.begin("lorawan-otaa", false)) return Restore::Error;
     current = Record{};
     if (!nvs.isKey("state")) {

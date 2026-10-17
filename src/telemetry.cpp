@@ -19,7 +19,7 @@ Telemetry read_telemetry(uint8_t status)
 {
     Telemetry sample{};
     sample.status = status;
-    if (status == 1 || status == 2)
+    if (status == 1 || status == 2 || status == 3)
     {
         useRtcLocation(sample);
     }

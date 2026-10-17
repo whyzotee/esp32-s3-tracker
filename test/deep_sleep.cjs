@@ -83,10 +83,10 @@ int main() {
     assert(timer == 3600000000ULL && ext1); checkShutdown();
     reset(); sensorReady = false;
     try { DeepSleep::timed(900000); } catch (Sleeping &) {}
-    assert(timer == 15000000 && !ext1); checkShutdown();
+    assert(timer == 60000000 && !ext1); checkShutdown();
     reset(); sos = true;
     try { DeepSleep::timed(3600000); } catch (Sleeping &) {}
-    assert(timer == 15000000 && ext1); checkShutdown();
+    assert(timer == 60000000 && ext1); checkShutdown();
     reset();
     try { DeepSleep::powerOff(); } catch (Sleeping &) {}
     assert(timer == 0 && !ext1); checkShutdown();

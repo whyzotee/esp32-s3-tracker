@@ -1,7 +1,7 @@
 #pragma once
 
-// Audible feedback is intentionally short and is only played while the ESP32
-// is awake. Board::prepareSleep() always silences the buzzer before sleep.
+// State loops run while the ESP32 is awake; trip/alarm states keep it awake.
+// Board::prepareSleep() always silences the buzzer before sleep.
 namespace AudioFeedback {
 enum class Event : unsigned char {
     PowerOn,
@@ -21,7 +21,7 @@ void begin();
 void play(Event event);
 
 // Repeat an event melody in the background until stopLoop() is called. This is
-// used for the in-progress OTAA Join state.
+// used for preparation/no ACK, off-route and SOS/Fall alerts.
 void startLoop(Event event);
 void stopLoop(Event event);
 

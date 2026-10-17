@@ -3,10 +3,9 @@
 
 // Shared tracker settings. Keep this header independent of peripheral drivers.
 namespace AppConfig {
-constexpr uint32_t reportIntervalMs = 1 * 60 * 1000;
+constexpr uint32_t reportIntervalMs = 1 * 30 * 1000; // 30 วิ
 constexpr uint32_t lowPowerIntervalMs = 15 * 60 * 1000;
 constexpr uint32_t retryInitialMs = 60 * 1000;
-constexpr uint32_t eventRetryMs = 15 * 1000;
 constexpr uint32_t firstGpsTimeoutMs = 120 * 1000;
 constexpr uint32_t gpsTimeoutMs = 30 * 1000;
 // Stop feeding the hardware Task WDT after this tracking budget; its original
@@ -37,6 +36,6 @@ namespace TrackerApp {
 // Arm once per wake, not periodically from loops. Disarm for sleep/OTA.
 void beginWatchdog();
 void endWatchdog();
-// One wake cycle: acquire telemetry, exchange LoRaWAN data, then sleep.
-[[noreturn]] void runCycle();
+// One cycle: acquire/send, then deep sleep or return after a serviced awake wait.
+void runCycle();
 }
