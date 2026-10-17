@@ -54,6 +54,8 @@ not a hexadecimal string.
 | End Trip | 11 | `02` | `Ag==` | Clear trip state, audio and pending events; enter soft-off until button power-on |
 | Off Route | 11 | `03` | `Aw==` | Repeat the off-route alarm during a trip; route detection is not performed on the device |
 | Route Clear | 11 | `04` | `BA==` | Stop the off-route alarm without cancelling SOS/Fall |
+| Acknowledge SOS | 11 | `05` | `BQ==` | Append one success melody to the current alarm phrase, then continue the alarm loop |
+| Acknowledge Fall | 11 | `06` | `Bg==` | Same audible receipt confirmation as Acknowledge SOS; the alarm continues |
 | Low Power ON | 10 | `01 00 0F` | `AQAP` | Use `AppConfig::lowPowerIntervalMs` during a trip |
 | Low Power OFF | 10 | `00 00 00` | `AAAA` | Return to `AppConfig::reportIntervalMs` |
 
@@ -62,6 +64,12 @@ Unknown commands and incorrect lengths are ignored. Repeated Start/End/Route
 commands are idempotent. `03` is ignored before a trip starts. The application
 must detect route deviations and send `04` when the device returns to the route.
 Cancelling SOS with the button does not clear the off-route alarm.
+
+Application acknowledgements (`05` / `06`) are distinct from LoRaWAN ACKs.
+Both use the shared SOS/Fall alarm: they do not cancel it, clear pending events,
+or report `I am OK`. A short button press is still required to cancel the alarm.
+Receipts received after cancellation are silent. Each received acknowledgement
+queues one success melody; the application should avoid sending duplicates.
 
 MQTT topic:
 

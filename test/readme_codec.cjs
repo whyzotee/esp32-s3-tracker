@@ -26,6 +26,7 @@ for (const [status, event] of ['Normal Update', 'SOS', 'Fall Detected', 'I am OK
 assert(context.decodeUplink({fPort: 11, bytes}).errors.length);
 assert(context.decodeUplink({fPort: 2, bytes: bytes.slice(1)}).errors.length);
 for (const [hex, base64] of [['01','AQ=='], ['02','Ag=='], ['03','Aw=='], ['04','BA=='],
+    ['05','BQ=='], ['06','Bg=='],
     ['01000f','AQAP'], ['000000','AAAA']]) {
     assert.equal(Buffer.from(base64, 'base64').toString('hex'), hex);
     assert(readme.includes(base64));

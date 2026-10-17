@@ -33,6 +33,7 @@ enum class Event { Sos, Fall, LoRaJoining, LoRaConnected };
 inline void startLoop(Event) {}
 inline void silence() {}
 inline void playAndWait(Event) {}
+inline void play(Event) {}
 }
 `);
     fs.writeFileSync(path.join(dir, 'test.cpp'), `

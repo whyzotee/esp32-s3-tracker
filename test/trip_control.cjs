@@ -17,8 +17,10 @@ using portMUX_TYPE = int;
     fs.writeFileSync(path.join(dir, 'audio_feedback.h'), `
 #pragma once
 namespace AudioFeedback {
-enum class Event { Sos, Fall, LoRaJoining };
+enum class Event { Sos, Fall, LoRaJoining, LoRaConnected };
 inline int last = -1;
+inline int receipts = 0;
+inline void play(Event e) { assert(e==Event::LoRaConnected); ++receipts; }
 inline void startLoop(Event e) { last = int(e); }
 inline void silence() { last = -1; }
 }
@@ -37,7 +39,8 @@ int main() {
     assert(!handleDownlink(11,nullptr,1));
     assert(!handleDownlink(11,malformed,0));
     assert(!handleDownlink(11,malformed,2));
-    assert(!command(0) && !command(5));
+    assert(!command(0) && !command(7));
+    assert(command(5) && command(6) && AudioFeedback::receipts==0);
     assert(!command(3)); // Off-route is meaningful only during a trip.
     assert(command(1) && command(1)); // Start can queue before initial GPS fix.
     assert(phase()==Phase::Preparing);
@@ -50,7 +53,11 @@ int main() {
     raiseAlarm(); const auto oldAlarm=revision();
     refreshAudio(); assert(AudioFeedback::last==int(AudioFeedback::Event::Sos));
     setAcknowledged(true); assert(alarmActive()); // Network ACK never cancels sound.
+    assert(command(5) && command(6) && AudioFeedback::receipts==2);
+    assert(alarmActive() && revision()==oldAlarm && !wellbeingPending());
+    refreshAudio(); assert(AudioFeedback::last==int(AudioFeedback::Event::Sos));
     assert(cancelAlarm() && !alarmActive() && wellbeingPending());
+    assert(command(5) && command(6) && AudioFeedback::receipts==2);
     assert(takeCancellation() && !takeCancellation());
     assert(!cancelAlarm()); // Another plain click does not create another OK report.
     acknowledgeWellbeing(oldAlarm); assert(wellbeingPending());

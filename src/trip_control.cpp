@@ -35,6 +35,13 @@ bool initialFixReady() { Guard guard; return initialFix; }
 void markInitialFix() { Guard guard; initialFix = true; }
 bool handleDownlink(uint8_t port, const uint8_t *data, size_t length) {
     if (port != 11 || data == nullptr || length != 1) return false;
+    if (data[0] == 5 || data[0] == 6) {
+        // Application receipt is separate from the network ACK. Queue a success
+        // suffix after the current alarm phrase without stopping its loop or
+        // clearing pending delivery. Ignore late receipts after cancellation.
+        if (alarmActive()) AudioFeedback::play(AudioFeedback::Event::LoRaConnected);
+        return true;
+    }
     Guard guard;
     switch (data[0]) {
     case 1: startRequested = true; return true;
