@@ -10,9 +10,10 @@ fs.writeFileSync(path.join(dir, 'trip_control.h'), `
 #pragma once
 namespace TripControl {
 inline void raiseAlarm() { ++toneCalls; }
-inline void refreshAudio() {}
+
 }
 `);
+fs.writeFileSync(path.join(dir, 'audio_policy.h'), '#pragma once\nnamespace AudioPolicy { inline void refresh() {} }\n');
 fs.writeFileSync(path.join(dir, 'audio_feedback.h'), `
 #pragma once
 namespace AudioFeedback {
@@ -212,7 +213,7 @@ int main() {
 }
 `);
 try {
-    cp.execFileSync('c++', ['-std=c++17', '-I'+dir, '-I'+path.join(root,'include'),
+    cp.execFileSync('c++', ['-std=c++17', '-DTRACKER_LOG_HOST_TEST', '-DTrackerLog=Serial' , '-DTRACKER_WEB_DEBUG=0', '-I'+dir, '-I'+path.join(root,'include'),
         path.join(dir,'test.cpp'), '-o', path.join(dir,'test')], {stdio:'inherit'});
     cp.execFileSync(path.join(dir,'test'), [], {stdio:'inherit'});
     console.log('ADXL362 FIFO/configuration/fall confirmation/sleep tests passed');

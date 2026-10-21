@@ -1,3 +1,4 @@
+#include <tracker_log.h>
 #include <Arduino.h>
 #include <audio_feedback.h>
 #include <board_pins.h>
@@ -36,6 +37,9 @@ constexpr Note loraJoining[] = {
 constexpr Note loraConnected[] = {
     {1760, 70, 40}, {2200, 70, 40}, {2640, 150, 0},
 };
+constexpr Note error[] = {
+    {700, 180, 90}, {500, 250, 0},
+};
 constexpr Note otaMode[] = {
     {1200, 100, 55}, {1600, 100, 55}, {1200, 100, 55}, {1600, 100, 55},
     {2400, 220, 0},
@@ -59,6 +63,8 @@ Melody melodyFor(AudioFeedback::Event event)
         return {loraJoining, uint8_t(sizeof(loraJoining) / sizeof(loraJoining[0])), "LoRa joining"};
     case AudioFeedback::Event::LoRaConnected:
         return {loraConnected, uint8_t(sizeof(loraConnected) / sizeof(loraConnected[0])), "LoRa connected"};
+    case AudioFeedback::Event::Error:
+        return {error, uint8_t(sizeof(error) / sizeof(error[0])), "error"};
     case AudioFeedback::Event::OtaMode:
         return {otaMode, uint8_t(sizeof(otaMode) / sizeof(otaMode[0])), "OTA mode"};
     case AudioFeedback::Event::DeepSleep:
@@ -67,12 +73,20 @@ Melody melodyFor(AudioFeedback::Event event)
     return {nullptr, 0, "unknown"};
 }
 
+// All LEDC access belongs to this worker. Producers only enqueue commands.
+struct Command {
+    AudioFeedback::Event event;
+    uint32_t generation;
+    bool silent;
+    SemaphoreHandle_t completion;
+};
 QueueHandle_t eventQueue = nullptr;
-SemaphoreHandle_t buzzerLock = nullptr;
+SemaphoreHandle_t commandLock = nullptr;
 bool buzzerAttached = false;
-std::atomic<bool> loopEnabled{false};
-std::atomic<AudioFeedback::Event> loopEvent{AudioFeedback::Event::LoRaJoining};
+bool loopEnabled = false; // Protected by commandLock.
+AudioFeedback::Event loopEvent = AudioFeedback::Event::LoRaJoining;
 std::atomic<uint32_t> audioGeneration{0};
+bool shuttingDown = false; // Protected by commandLock; terminal until reboot.
 
 bool waitNote(uint32_t durationMs, uint32_t generation)
 {
@@ -95,39 +109,83 @@ void stopBuzzer()
     digitalWrite(Board::buzzer, LOW);
 }
 
-void playMelody(AudioFeedback::Event event)
+void playMelody(const Command &command)
 {
-    const Melody melody = melodyFor(event);
-    if (!melody.notes || !buzzerLock) return;
-    xSemaphoreTake(buzzerLock, portMAX_DELAY);
-    const uint32_t generation = audioGeneration.load();
+    const Melody melody = melodyFor(command.event);
+    if (command.silent || !melody.notes ||
+        command.generation != audioGeneration.load()) return;
     if (!ledcAttach(Board::buzzer, melody.notes[0].hz, 10)) {
-        Serial.println("[AUDIO] Failed to attach buzzer LEDC");
-        xSemaphoreGive(buzzerLock);
+        TrackerLog.println("[AUDIO] Failed to attach buzzer LEDC");
         return;
     }
     buzzerAttached = true;
     for (uint8_t i = 0; i < melody.count; ++i) {
+        if (command.generation != audioGeneration.load()) break;
         const Note &note = melody.notes[i];
         ledcWriteTone(Board::buzzer, note.hz);
-        if (!waitNote(note.onMs, generation)) break;
+        if (!waitNote(note.onMs, command.generation)) break;
         ledcWriteTone(Board::buzzer, 0);
-        if (note.offMs && !waitNote(note.offMs, generation)) break;
+        if (note.offMs && !waitNote(note.offMs, command.generation)) break;
     }
-    stopBuzzer();
-    xSemaphoreGive(buzzerLock);
+}
+
+// Caller holds commandLock. Complete cancelled synchronous requests as well:
+// resetting the queue alone would strand their waiting callers.
+void cancelPending()
+{
+    loopEnabled = false;
+    ++audioGeneration;
+    Command command;
+    while (xQueueReceive(eventQueue, &command, 0) == pdTRUE) {
+        if (command.completion) xSemaphoreGive(command.completion);
+    }
 }
 
 void worker(void *)
 {
-    AudioFeedback::Event event;
+    Command command;
     for (;;) {
-        if (xQueueReceive(eventQueue, &event, portMAX_DELAY) == pdTRUE) {
-            playMelody(event);
-            if (loopEnabled && event == loopEvent)
-                xQueueSend(eventQueue, &event, 0);
+        if (xQueueReceive(eventQueue, &command, portMAX_DELAY) != pdTRUE) continue;
+        playMelody(command);
+        stopBuzzer();
+        if (command.completion) xSemaphoreGive(command.completion);
+        xSemaphoreTake(commandLock, portMAX_DELAY);
+        if (!shuttingDown && loopEnabled && !command.silent &&
+            command.event == loopEvent && command.generation == audioGeneration.load()) {
+            command.completion = nullptr;
+            xQueueSend(eventQueue, &command, 0);
         }
+        xSemaphoreGive(commandLock);
     }
+}
+
+// A generation change cancels a dequeued-but-not-yet-started melody too.
+// The barrier completes only after the worker has silenced the physical pin.
+void synchronous(AudioFeedback::Event event, bool silent, bool terminal)
+{
+    if (!eventQueue || !commandLock) return;
+    SemaphoreHandle_t done = xSemaphoreCreateBinary();
+    if (!done) {
+        // Still stop any current/queued work; do not play a partial shutdown.
+        xSemaphoreTake(commandLock, portMAX_DELAY);
+        shuttingDown = true;
+        cancelPending();
+        xSemaphoreGive(commandLock);
+        while (true) delay(1000); // Watchdog recovers an allocation failure.
+    }
+    xSemaphoreTake(commandLock, portMAX_DELAY);
+    if (shuttingDown && !silent) {
+        xSemaphoreGive(commandLock);
+        vSemaphoreDelete(done);
+        return;
+    }
+    if (terminal) shuttingDown = true;
+    cancelPending();
+    const Command command{event, audioGeneration.load(), silent, done};
+    xQueueSend(eventQueue, &command, portMAX_DELAY);
+    xSemaphoreGive(commandLock);
+    xSemaphoreTake(done, portMAX_DELAY);
+    vSemaphoreDelete(done);
 }
 }
 
@@ -135,63 +193,61 @@ namespace AudioFeedback {
 void begin()
 {
     if (eventQueue) return;
-    buzzerLock = xSemaphoreCreateMutex();
-    eventQueue = xQueueCreate(4, sizeof(Event));
-    if (!buzzerLock || !eventQueue ||
-        xTaskCreate(worker, "buzzer", 2048, nullptr, 1, nullptr) != pdPASS) {
-        Serial.println("[AUDIO] Buzzer worker unavailable");
+    stopBuzzer(); // Before any worker exists.
+    commandLock = xSemaphoreCreateMutex();
+    eventQueue = xQueueCreate(4, sizeof(Command));
+    if (!commandLock || !eventQueue ||
+        xTaskCreate(worker, "buzzer", 3072, nullptr, 1, nullptr) != pdPASS) {
+        TrackerLog.println("[AUDIO] Buzzer worker unavailable");
+        if (eventQueue) vQueueDelete(eventQueue);
+        if (commandLock) vSemaphoreDelete(commandLock);
         eventQueue = nullptr;
+        commandLock = nullptr;
     }
 }
 
 void play(Event event)
 {
-    const Melody melody = melodyFor(event);
-    if (!melody.notes || !eventQueue) return;
-    if (xQueueSend(eventQueue, &event, 0) != pdTRUE) {
-        Serial.printf("[AUDIO] Dropped %s melody (queue busy)\n", melody.name);
-        return;
+    if (!eventQueue) return;
+    xSemaphoreTake(commandLock, portMAX_DELAY);
+    if (!shuttingDown) {
+        const Command command{event, audioGeneration.load(), false, nullptr};
+        if (xQueueSend(eventQueue, &command, 0) == pdTRUE)
+            TrackerLog.printf("[AUDIO] %s melody queued\n", melodyFor(event).name);
+        else
+            TrackerLog.printf("[AUDIO] Dropped %s melody (queue busy)\n", melodyFor(event).name);
     }
-    Serial.printf("[AUDIO] %s melody queued\n", melody.name);
+    xSemaphoreGive(commandLock);
 }
 
 void startLoop(Event event)
 {
-    if (loopEnabled && loopEvent == event) return;
-    const Melody melody = melodyFor(event);
-    if (!melody.notes || !eventQueue) return;
-    loopEvent = event;
-    loopEnabled = true;
-    ++audioGeneration;
-    xQueueReset(eventQueue);
-    if (xQueueSend(eventQueue, &event, 0) == pdTRUE)
-        Serial.printf("[AUDIO] %s melody loop started\n", melody.name);
+    if (!eventQueue) return;
+    xSemaphoreTake(commandLock, portMAX_DELAY);
+    if (!shuttingDown && !(loopEnabled && loopEvent == event)) {
+        cancelPending();
+        loopEvent = event;
+        loopEnabled = true;
+        const Command command{event, audioGeneration.load(), false, nullptr};
+        xQueueSend(eventQueue, &command, 0);
+        TrackerLog.printf("[AUDIO] %s melody loop started\n", melodyFor(event).name);
+    }
+    xSemaphoreGive(commandLock);
 }
 
 void stopLoop(Event event)
 {
-    if (!loopEnabled || loopEvent != event) return;
-    loopEnabled = false;
-    ++audioGeneration;
-    if (eventQueue) xQueueReset(eventQueue);
-    Serial.printf("[AUDIO] %s melody loop stopped\n", melodyFor(event).name);
+    if (!eventQueue) return;
+    xSemaphoreTake(commandLock, portMAX_DELAY);
+    if (!shuttingDown && loopEnabled && loopEvent == event) {
+        cancelPending();
+        TrackerLog.printf("[AUDIO] %s melody loop stopped\n", melodyFor(event).name);
+    }
+    xSemaphoreGive(commandLock);
 }
 
-void playAndWait(Event event)
-{
-    const Melody melody = melodyFor(event);
-    if (!melody.notes || !buzzerLock) return;
-    playMelody(event);
-}
-
-void silence()
-{
-    if (!buzzerLock) return;
-    loopEnabled = false;
-    ++audioGeneration;
-    if (eventQueue) xQueueReset(eventQueue);
-    xSemaphoreTake(buzzerLock, portMAX_DELAY);
-    stopBuzzer();
-    xSemaphoreGive(buzzerLock);
-}
+void playAndWait(Event event) { synchronous(event, false, false); }
+void silence() { synchronous(Event::DeepSleep, true, false); }
+void shutdown() { synchronous(Event::PowerOff, false, true); }
+void prepareSleep() { synchronous(Event::DeepSleep, true, true); }
 }

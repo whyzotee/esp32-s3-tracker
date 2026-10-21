@@ -1,7 +1,9 @@
+#include <tracker_log.h>
 #include <Arduino.h>
 #include <audio_feedback.h>
 #include <board_pins.h>
 #include <debug_mode.h>
+#include <debug_web.h>
 #include <deep_sleep.h>
 #include <fall_detection.h>
 #include <gnss.h>
@@ -43,10 +45,10 @@ void setup()
     if (DeviceButton::startedFromPowerOff()) lora_forget_rtc_session();
     if (DeviceButton::otaPending()) OtaManager::run(AppConfig::reportIntervalMs);
 
-    Serial.println("\n=== ESP32-S3 Tracker Initializing ===");
-    Serial.printf("[BOOT] Reset reason: %d\n", int(esp_reset_reason()));
+    TrackerLog.println("\n=== ESP32-S3 Tracker Initializing ===");
+    TrackerLog.printf("[BOOT] Reset reason: %d\n", int(esp_reset_reason()));
 
-    Serial.printf("LoRa debug: %s\n", LORA_DEBUG ? "ON (real deep sleep)" : "OFF");
+    TrackerLog.printf("LoRa debug: %s\n", LORA_DEBUG ? "ON (real deep sleep)" : "OFF");
     DebugMode::begin(LORA_DEBUG, LORA_DEBUG_INTERVAL_MS);
     DeepSleep::logWakeReason();
     Battery::bootReading();
@@ -54,6 +56,7 @@ void setup()
     if (!LORA_DEBUG) {
         setup_gnss(GNSS_DEBUG);
     }
+    DebugWeb::begin();
 }
 
 void loop()

@@ -1,7 +1,7 @@
 #pragma once
 
 // State loops run while the ESP32 is awake; trip/alarm states keep it awake.
-// Board::prepareSleep() always silences the buzzer before sleep.
+// Board::prepareSleep() closes audio admission and silences the buzzer.
 namespace AudioFeedback {
 enum class Event : unsigned char {
     PowerOn,
@@ -10,6 +10,7 @@ enum class Event : unsigned char {
     Fall,
     LoRaJoining,
     LoRaConnected,
+    Error,
     OtaMode,
     DeepSleep,
 };
@@ -21,15 +22,20 @@ void begin();
 void play(Event event);
 
 // Repeat an event melody in the background until stopLoop() is called. This is
-// used for preparation/no ACK, off-route and SOS/Fall alerts.
+// used for active preparation, off-route and SOS/Fall alerts.
 void startLoop(Event event);
 void stopLoop(Event event);
 
-// Use for events that immediately enter deep sleep, so the user can hear the
-// complete melody before the buzzer rail is shut down.
+// Replace prior work and wait for the worker to finish the confirmation.
 void playAndWait(Event event);
 
 // Cancels queued audio and returns GPIO4 to a normal LOW GPIO output.
-// Board::prepareSleep() calls this before applying GPIO hold.
+// Unlike prepareSleep(), this permits later audio commands.
 void silence();
+
+// Terminal barrier: cancel all prior work, play PowerOff once, then reject
+// further melodies until reboot. Returns only when LEDC is detached/pin LOW.
+void shutdown();
+// Terminal silent barrier used immediately before applying GPIO sleep holds.
+void prepareSleep();
 }

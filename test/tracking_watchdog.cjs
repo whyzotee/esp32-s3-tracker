@@ -5,7 +5,7 @@ const os = require('os');
 const path = require('path');
 const assert = require('assert');
 const root = path.resolve(__dirname, '..');
-const source = fs.readFileSync(path.join(root, 'src/tracker_app.cpp'), 'utf8');
+const source = fs.readFileSync(path.join(root, 'src/tracking_watchdog.cpp'), 'utf8');
 assert(!source.includes('esp_task_wdt_reconfigure'));
 assert(!source.includes('esp_task_wdt_init'));
 assert(!source.includes('esp_restart('));
@@ -105,7 +105,7 @@ int main() {
 }
 `);
     const binary = path.join(dir, 'test');
-    cp.execFileSync('c++', ['-std=c++17', '-I', path.join(root, 'include'), path.join(dir, 'test.cpp'), '-o', binary]);
+    cp.execFileSync('c++', ['-std=c++17', '-DTRACKER_LOG_HOST_TEST', '-DTrackerLog=Serial' , '-DTRACKER_WEB_DEBUG=0', '-I', path.join(root, 'include'), path.join(dir, 'test.cpp'), '-o', binary]);
     cp.execFileSync(binary);
     console.log('Tracking watchdog lifecycle, deadline simulation and OTA/sleep integration checks passed');
 } finally {

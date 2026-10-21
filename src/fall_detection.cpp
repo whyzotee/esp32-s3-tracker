@@ -1,6 +1,7 @@
+#include <tracker_log.h>
 #include <fall_detection.h>
 #include <SPI.h>
-#include <audio_feedback.h>
+#include <audio_policy.h>
 #include <trip_control.h>
 #include <driver/rtc_io.h>
 #include <math.h>
@@ -43,7 +44,7 @@ void classifySample(int16_t x, int16_t y, int16_t z)
         if (squared >= int64_t(FALL_IMPACT_MG) * FALL_IMPACT_MG) {
             pending = true;
             resetClassifier();
-            Serial.println("[ADXL362] FALL: low acceleration followed by impact; status=2 queued");
+            TrackerLog.println("[ADXL362] FALL: low acceleration followed by impact; status=2 queued");
             return;
         }
         --impactSamplesLeft;
@@ -101,7 +102,7 @@ bool devicePresent()
     uint8_t id[3];
     readRegisters(0x00, id, sizeof(id));
     if (diagnosticMode && !available) {
-        Serial.printf("[FALL DEBUG] Device ID: %02X %02X %02X (expected AD 1D F2)\n",
+        TrackerLog.printf("[FALL DEBUG] Device ID: %02X %02X %02X (expected AD 1D F2)\n",
                       id[0], id[1], id[2]);
     }
     return id[0] == 0xAD && id[1] == 0x1D && id[2] == 0xF2;
@@ -119,7 +120,7 @@ bool writeRegister(uint8_t reg, uint8_t value)
     uint8_t actual = 0;
     readRegisters(reg, &actual, 1);
     if (diagnosticMode && actual != value) {
-        Serial.printf("[FALL DEBUG] Register 0x%02X write failed: expected=0x%02X actual=0x%02X\n",
+        TrackerLog.printf("[FALL DEBUG] Register 0x%02X write failed: expected=0x%02X actual=0x%02X\n",
                       reg, value, actual);
     }
     return actual == value;
@@ -133,7 +134,7 @@ bool readInterrupt(bool allowUnconfigured = false, bool verifyDevice = true)
     readRegisters(STATUS, &source, 1); // Clears ACT/INACT hardware latches.
     if (source & REGISTER_ERROR) {
         if (diagnosticMode) {
-            Serial.printf("[FALL DEBUG] STATUS=0x%02X ERR_USER_REGS=1 (%s)\n",
+            TrackerLog.printf("[FALL DEBUG] STATUS=0x%02X ERR_USER_REGS=1 (%s)\n",
                           source, allowUnconfigured ? "expected before configuration" : "unexpected");
         }
         return allowUnconfigured;
@@ -153,7 +154,7 @@ bool readInterrupt(bool allowUnconfigured = false, bool verifyDevice = true)
         }
         if (!pending) {
             resetClassifier();
-            Serial.println("[ADXL362] Suspected fall rejected: no qualifying impact");
+            TrackerLog.println("[ADXL362] Suspected fall rejected: no qualifying impact");
         }
     }
     return true;
@@ -172,7 +173,7 @@ bool setup_fall_detection(bool debug)
     sensorBus.begin(Board::accelSck, Board::accelMiso, Board::accelMosi, Board::accelCs);
     delay(5); // Power-on register access settling.
     if (!devicePresent()) {
-        Serial.println("[ADXL362] Not found (expected AD 1D F2); check SPI wiring. Fall wake disabled");
+        TrackerLog.println("[ADXL362] Not found (expected AD 1D F2); check SPI wiring. Fall wake disabled");
         return false;
     }
     // Read retained FIFO BEFORE standby/reconfiguration: impact may precede CPU boot.
@@ -194,19 +195,19 @@ bool setup_fall_detection(bool debug)
         !readInterrupt(false, false) ||
         !writeRegister(0x2A, INACT) || // Active-high latched INT1.
         !writeRegister(0x2D, 0x02)) { // Continuous measurement; no autosleep.
-        Serial.println("[ADXL362] Configuration/readback failed; fall wake disabled");
+        TrackerLog.println("[ADXL362] Configuration/readback failed; fall wake disabled");
         return false;
     }
     resetClassifier();
     available = true;
-    Serial.printf("[ADXL362] Ready: CS=%d SCK=%d MISO=%d MOSI=%d INT1=%d, %umg/%ums\n",
+    TrackerLog.printf("[ADXL362] Ready: CS=%d SCK=%d MISO=%d MOSI=%d INT1=%d, %umg/%ums\n",
                   Board::accelCs, Board::accelSck, Board::accelMiso, Board::accelMosi,
                   int(FALL_INT_PIN), FALL_THRESHOLD_MG, FALL_DURATION_SAMPLES * FALL_SAMPLE_MS);
-    Serial.printf("[ADXL362] Confirmation: impact >=%umg within %ums; range +/-8g, FIFO 50Hz\n",
+    TrackerLog.printf("[ADXL362] Confirmation: impact >=%umg within %ums; range +/-8g, FIFO 50Hz\n",
                   FALL_IMPACT_MG, FALL_IMPACT_WINDOW_MS);
     if (diagnosticMode) {
-        Serial.println("[FALL DEBUG] Real deep-sleep wake, status=2 uplink and buzzer enabled");
-        Serial.println("[FALL DEBUG] Use a padded fixture; low acceleration alone does not send a fall alert");
+        TrackerLog.println("[FALL DEBUG] Real deep-sleep wake, status=2 uplink and buzzer enabled");
+        TrackerLog.println("[FALL DEBUG] Use a padded fixture; low acceleration alone does not send a fall alert");
     }
     return true;
 }
@@ -218,7 +219,7 @@ void update_fall_detection(bool debug)
     if (!readInterrupt()) {
         if (uint32_t(millis() - lastLog) >= 1000) {
             lastLog = millis();
-            Serial.println("[ADXL362] SPI identity/register error");
+            TrackerLog.println("[ADXL362] SPI identity/register error");
         }
         return;
     }
@@ -230,7 +231,7 @@ void update_fall_detection(bool debug)
         int16_t y = uint16_t(data[2]) | uint16_t(data[3]) << 8;
         int16_t z = uint16_t(data[4]) | uint16_t(data[5]) << 8;
         const float magnitude = sqrtf(float(x) * x + float(y) * y + float(z) * z) * 0.004f;
-        Serial.printf("[FALL DEBUG] x=%+.3fg y=%+.3fg z=%+.3fg |a|=%.3fg INT1=%d pending=%s\n",
+        TrackerLog.printf("[FALL DEBUG] x=%+.3fg y=%+.3fg z=%+.3fg |a|=%.3fg INT1=%d pending=%s\n",
                       x * 0.004, y * 0.004, z * 0.004, magnitude,
                       digitalRead(FALL_INT_PIN), pending ? "YES" : "NO");
     }
@@ -238,8 +239,8 @@ void update_fall_detection(bool debug)
     if (pending && !fallBuzzerPlayed) {
         fallBuzzerPlayed = true;
         TripControl::raiseAlarm();
-        TripControl::refreshAudio();
-        Serial.println("[FALL] EVENT DETECTED; alert tone active");
+        AudioPolicy::refresh();
+        TrackerLog.println("[FALL] EVENT DETECTED; alert tone active");
     }
 }
 

@@ -17,23 +17,26 @@ using portMUX_TYPE = int;
     fs.writeFileSync(path.join(dir, 'audio_feedback.h'), `
 #pragma once
 namespace AudioFeedback {
-enum class Event { Sos, Fall, LoRaJoining, LoRaConnected };
+enum class Event { Sos, Fall, LoRaJoining, LoRaConnected, Error };
 inline int last = -1;
 inline int receipts = 0;
-inline void play(Event e) { assert(e==Event::LoRaConnected); ++receipts; }
+inline int errors = 0;
+inline void play(Event e) { if(e==Event::Error) ++errors; else { assert(e==Event::LoRaConnected); ++receipts; } }
 inline void startLoop(Event e) { last = int(e); }
-inline void silence() { last = -1; }
+inline void stopLoop(Event e) { if(last==int(e))last=-1; }
+inline void playAndWait(Event e) { play(e); }
 }
 `);
     fs.writeFileSync(path.join(dir, 'test.cpp'), `
 #include <cassert>
 #include "trip_control.cpp"
+#include "audio_policy.cpp"
 using namespace TripControl;
 bool command(uint8_t value) { return handleDownlink(11, &value, 1); }
 int main() {
     reset();
     assert(phase()==Phase::Preparing && keepAwake());
-    refreshAudio(); assert(AudioFeedback::last==int(AudioFeedback::Event::LoRaJoining));
+    AudioPolicy::refresh(); assert(AudioFeedback::last==int(AudioFeedback::Event::LoRaJoining));
     uint8_t malformed[]={1,0};
     assert(!handleDownlink(10,malformed,1));
     assert(!handleDownlink(11,nullptr,1));
@@ -45,24 +48,30 @@ int main() {
     assert(command(1) && command(1)); // Start can queue before initial GPS fix.
     assert(phase()==Phase::Preparing);
     markInitialFix(); assert(phase()==Phase::Travelling);
+    markLoRaConnected(); AudioPolicy::refresh();
+    assert(AudioFeedback::receipts==1);
+    AudioFeedback::receipts=0;
     setAcknowledged(false); assert(keepAwake());
     setAcknowledged(true); assert(!keepAwake());
-    refreshAudio(); assert(AudioFeedback::last==-1);
+    AudioPolicy::refresh(); assert(AudioFeedback::last==-1);
     assert(command(3) && offRoute() && keepAwake());
-    refreshAudio(); assert(AudioFeedback::last==int(AudioFeedback::Event::Fall));
+    AudioPolicy::refresh(); assert(AudioFeedback::last==int(AudioFeedback::Event::Fall));
     raiseAlarm(); const auto oldAlarm=revision();
-    refreshAudio(); assert(AudioFeedback::last==int(AudioFeedback::Event::Sos));
+    AudioPolicy::refresh(); assert(AudioFeedback::last==int(AudioFeedback::Event::Sos));
     setAcknowledged(true); assert(alarmActive()); // Network ACK never cancels sound.
-    assert(command(5) && command(6) && AudioFeedback::receipts==2);
+    assert(command(5) && command(6)); AudioPolicy::refresh();
+    assert(AudioFeedback::receipts==2);
     assert(alarmActive() && revision()==oldAlarm && !wellbeingPending());
-    refreshAudio(); assert(AudioFeedback::last==int(AudioFeedback::Event::Sos));
+    AudioPolicy::refresh(); assert(AudioFeedback::last==int(AudioFeedback::Event::Sos));
     assert(cancelAlarm() && !alarmActive() && wellbeingPending());
     assert(command(5) && command(6) && AudioFeedback::receipts==2);
     assert(takeCancellation() && !takeCancellation());
+    AudioPolicy::refresh(); assert(AudioFeedback::receipts==3);
+    AudioPolicy::refresh(); assert(AudioFeedback::receipts==3); // Once per cancellation.
     assert(!cancelAlarm()); // Another plain click does not create another OK report.
     acknowledgeWellbeing(oldAlarm); assert(wellbeingPending());
     acknowledgeWellbeing(revision()); assert(!wellbeingPending());
-    refreshAudio(); assert(AudioFeedback::last==int(AudioFeedback::Event::Fall));
+    AudioPolicy::refresh(); assert(AudioFeedback::last==int(AudioFeedback::Event::Fall));
     assert(command(4) && !offRoute() && !keepAwake());
     raiseAlarm(); assert(cancelAlarm()); const auto oldOk=revision();
     raiseAlarm(); assert(!wellbeingPending()); assert(cancelAlarm());
@@ -73,6 +82,51 @@ int main() {
     markInitialFix(); assert(phase()==Phase::Waiting && keepAwake());
     setAcknowledged(true); assert(keepAwake()); // Await application Start, even after successful ACK.
     assert(command(1) && phase()==Phase::Travelling && !keepAwake());
+    reset(); markLoRaConnected(); markInitialFix();
+    const int confirmations=AudioFeedback::receipts;
+    AudioPolicy::refresh(); assert(phase()==Phase::Waiting && AudioFeedback::last==-1);
+    assert(AudioFeedback::receipts==confirmations+1);
+    setAcknowledged(false); AudioPolicy::refresh(); AudioPolicy::refresh();
+    assert(AudioFeedback::last==-1 && AudioFeedback::receipts==confirmations+1);
+    reset(); AudioPolicy::refresh(); preparationFailed(); AudioPolicy::refresh();
+    assert(AudioFeedback::errors==1 && AudioFeedback::last==-1);
+    AudioPolicy::refresh(); preparationFailed(); AudioPolicy::refresh();
+    assert(AudioFeedback::errors==1 && AudioFeedback::last==-1);
+    assert(retryPreparation()); AudioPolicy::refresh();
+    assert(AudioFeedback::last==int(AudioFeedback::Event::LoRaJoining));
+    assert(!retryPreparation());
+    preparationFailed(); AudioPolicy::refresh(); assert(AudioFeedback::errors==2);
+    assert(retryPreparation()); markLoRaConnected(); markInitialFix(); AudioPolicy::refresh();
+    const int readyConfirmations=AudioFeedback::receipts;
+    assert(phase()==Phase::Waiting && !retryPreparation()); AudioPolicy::refresh();
+    assert(AudioFeedback::last==-1 && AudioFeedback::receipts==readyConfirmations);
+    raiseAlarm(); AudioPolicy::refresh(); assert(AudioFeedback::last==int(AudioFeedback::Event::Sos));
+    reset(); // Cancellation feedback also works during initial preparation.
+    raiseAlarm(); AudioPolicy::refresh(); assert(cancelAlarm());
+    const int beforeCancel=AudioFeedback::receipts;
+    AudioPolicy::refresh(); assert(AudioFeedback::receipts==beforeCancel+1);
+    AudioPolicy::refresh(); assert(AudioFeedback::receipts==beforeCancel+1);
+    assert(!cancelAlarm()); AudioPolicy::refresh();
+    assert(AudioFeedback::receipts==beforeCancel+1);
+    raiseAlarm(); assert(cancelAlarm()); raiseAlarm();
+    AudioPolicy::refresh(); assert(AudioFeedback::receipts==beforeCancel+1);
+    reset();
+    const int beforeNetwork=AudioFeedback::receipts;
+    const int beforeErrors=AudioFeedback::errors;
+    AudioPolicy::transmissionResult(true);
+    AudioPolicy::transmissionResult(false);
+    assert(AudioFeedback::receipts==beforeNetwork && AudioFeedback::errors==beforeErrors);
+    markLoRaConnected(); markInitialFix(); // Ready, still awaiting Start.
+    AudioPolicy::transmissionResult(true); AudioPolicy::transmissionResult(true);
+    assert(AudioFeedback::receipts==beforeNetwork+2);
+    AudioPolicy::transmissionResult(false); assert(AudioFeedback::errors==beforeErrors+1);
+    raiseAlarm(); AudioPolicy::transmissionResult(true); AudioPolicy::transmissionResult(false);
+    assert(AudioFeedback::receipts==beforeNetwork+2 && AudioFeedback::errors==beforeErrors+1);
+    assert(cancelAlarm()); assert(command(1) && command(3));
+    AudioPolicy::transmissionResult(true); AudioPolicy::transmissionResult(false);
+    assert(AudioFeedback::receipts==beforeNetwork+2 && AudioFeedback::errors==beforeErrors+1);
+    assert(command(4)); AudioPolicy::transmissionResult(true);
+    assert(AudioFeedback::receipts==beforeNetwork+3);
 }
 `);
     const root = path.resolve(__dirname, '..');

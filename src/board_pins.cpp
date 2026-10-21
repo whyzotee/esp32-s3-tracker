@@ -28,7 +28,7 @@ void prepareSleep()
 {
     setVext(false);
     gpio_hold_en(gpio_num_t(vextControl));
-    AudioFeedback::silence();
+    AudioFeedback::prepareSleep();
     for (int pin : {buzzer, vibration, statusLed}) {
         digitalWrite(pin, LOW);
         gpio_hold_en(gpio_num_t(pin));

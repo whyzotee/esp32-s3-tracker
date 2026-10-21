@@ -20,6 +20,8 @@ struct Telemetry {
     uint16_t batteryMv = 0;
     uint8_t batteryPercent = 0;
 };
-constexpr size_t TELEMETRY_PAYLOAD_SIZE = 15;
+constexpr size_t TELEMETRY_PAYLOAD_SIZE = 9;
+constexpr size_t DEVICE_INFO_PAYLOAD_SIZE = 4;
 Telemetry read_telemetry(uint8_t status);
 void encode_telemetry(const Telemetry &sample, uint8_t *payload);
+void encode_device_info(const Telemetry &sample, uint8_t *payload);

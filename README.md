@@ -23,14 +23,22 @@ On power-up or reset, the device starts **soft-off**. Hold the button for
 1–4 seconds to turn it on. Soft-off does not physically disconnect the battery.
 
 ```text
-Off → Button power-on → OTAA Join → Qualified initial GPS fix → Await Start → Travelling
+Off → Button power-on → OTAA Join + GPS acquisition → Await Start → Travelling
                                                                                 ↓
 Off ← Application End Trip command ←─────────────────────────────────────────────┘
 ```
 
-GNSS is powered before Join, allowing satellite acquisition to begin while LoRa
-connects. However, GPS parsing/fix qualification and radio transactions remain
-sequential; no parallel GNSS task is added. If no fix qualifies, the device
+GNSS acquisition and OTAA Join run concurrently. A dedicated FreeRTOS GPS task
+on core 0 (4096-byte stack, priority 1) continuously drains UART1 and exclusively
+owns the NMEA parser and quality/stability checks. It publishes complete fix
+snapshots through a one-slot queue. The GPS task alone logs search progress once
+per second and reports the first qualified fix or timeout once per acquisition,
+including while LoRa is joining. The main task alone updates RTC
+coordinates/trip state and owns LoRa; GPS no longer runs inside RadioLib wait
+callbacks. Shutdown signals the GPS task and waits for its acknowledgement
+before closing UART1 or cutting peripheral power. Task/queue allocation failure
+disables GPS safely without blocking LoRa. The GPS timeout starts before Join
+and is not restarted after the airtime wait. If no fix qualifies, the device
 reports preparation status with `initial_fix_ready=false` and retries using the
 existing acquisition timeouts. A Start command received before the initial fix
 is remembered, but travelling begins only after a fix qualifies. `LORA_DEBUG`
@@ -43,6 +51,15 @@ GPS acquisition, TX/RX processing and airtime limits can extend the actual
 reporting period beyond the configured interval.
 
 ### All downlink commands
+
+For the deployed SF12 test network, the tracker AS923 band defaults to no
+downlink dwell-time limit, matching ChirpStack's RX1 DR0/SF12 replies.
+RadioLib's `setDwellTime(false)` disables only the uplink limit; leaving the
+AS923 downlink default enabled instead clamps RX1 to DR2/SF10. This configuration
+must comply with the deployment's regional requirements. After changing this
+default, use the button to power off/on and establish a new OTAA session rather
+than restoring an older RTC session. Do not erase stored DevNonce history.
+Network MAC commands can subsequently change the dwell-time settings.
 
 FPort identifies an application-data channel within LoRaWAN; it is not a GPIO
 or TCP/UDP port. JSON `data` must contain **Base64-encoded command bytes**,
@@ -99,18 +116,19 @@ Start; the user must turn it on with the button first.
 
 ### Uplink and decoder
 
-FPort **2**, **15-byte** payload, always confirmed. The payload length is unchanged:
+FPort **2**, **9-byte** primary payload, always confirmed:
 
 | Byte offset | Format | Meaning |
 | --- | --- | --- |
 | 0 | uint8 | Event/status from the table below |
-| 1–4 | float32 little-endian | Latitude |
-| 5–8 | float32 little-endian | Longitude |
-| 9 | bit flags | See the flag definitions below |
-| 10 | uint8 | Firmware major |
-| 11 | uint8 | Firmware minor |
-| 12–13 | uint16 little-endian | Battery mV |
-| 14 | uint8 | Battery percent |
+| 1–3 | signed int24 little-endian × 90 / 8388607 | Latitude |
+| 4–6 | signed int24 little-endian × 180 / 8388607 | Longitude |
+| 7 | bit flags | See the flag definitions below |
+| 8 | uint8 | Battery percent |
+
+FPort **3** carries a separate **4-byte** device-info packet: firmware major,
+minor, then battery mV uint16 LE. See the decoder section for scheduling and
+application caching requirements. The decoder also accepts legacy 15-byte frames.
 
 | Status | Recommended decoder event | Meaning |
 | ---: | --- | --- |
@@ -142,8 +160,10 @@ writes and are lost when battery power is removed.
 
 ### QoS, audible alerts and cancellation
 
-- Every uplink requests a LoRaWAN ACK. An ACK produces the success melody;
-  a missing ACK keeps the working tone and schedules a retry after
+- Every uplink requests a LoRaWAN ACK. Once LoRa/GPS are ready, both while
+  awaiting Start and during a trip, each ACK produces the success melody and
+  a missing ACK produces the error melody, unless an emergency/off-route alarm
+  is active. A missing ACK schedules a retry after
   `AppConfig::retryInitialMs` (60 seconds), or a longer radio-required wait.
   Retries are not sent in a tight loop.
 - ACK confirms LoRaWAN network reception through a gateway;
@@ -153,10 +173,11 @@ writes and are lost when battery power is removed.
   of the old event and queues status 3 until acknowledged. A new emergency before
   successful I-am-OK delivery takes priority and supersedes the older OK report.
 - SOS and Fall share one melody; off-route uses another alarm pattern.
-  Audio priority is SOS/Fall > off-route > preparation/awaiting Start/missing ACK.
+  Audio priority is SOS/Fall > off-route > active preparation.
   Success melodies do not interrupt an emergency alarm awaiting cancellation.
-- Repeating audio **keeps the MCU awake**, including while awaiting Start or a
-  missing ACK. These states consume more power than deep sleep; the 90 µA sleep
+- Preparation, awaiting Start, missing ACK and active alarms **keep the MCU awake**.
+  Awaiting Start has no working loop; readiness and per-transmission ACK/error confirmations are one-shot rather than
+  repeating loops. These states consume more power than deep sleep; the 90 µA sleep
   measurement does not apply. Normal active-trip operation returns to deep sleep
   after an ACK when no alarm is active.
 - Awake waits continue servicing buttons and the sensor instead of blocking all
@@ -180,7 +201,7 @@ Both modes start soft-off, then prepare and wait for the application Start comma
 They save sessions in RTC and use real deep sleep only during an active trip with
 ACK received and no ongoing alarm. Other states use a serviced awake wait.
 Debug normally uses a 15-second active-trip interval; radio limits still apply.
-GPS is not required in debug. Debug uses the production DR2 (SF10/BW125), with synthetic coordinates
+GPS is not required in debug. Debug uses the shared configured uplink DR, with synthetic coordinates
 starting at 13.756300, 100.501800. Each step moves at 0.9–1.5 m/s with a gradual
 random turn of up to 30.5 degrees. At 15 seconds this is about 13.5–22.5 metres.
 Deep-sleep wakes continue the track from RTC, including time spent asleep.
@@ -188,21 +209,46 @@ Reset or power loss starts the simulated track again. This is a free walking sim
 not a route constrained to roads. Its timestamp is elapsed simulation time, not UTC.
 Serial labels it `[SIMULATED WALK]`; `debug_simulation` marks synthetic positions.
 
-Set `LORA_DEBUG = false` for deployment: acquire GPS, send at DR2 (SF10/BW125),
+Set `LORA_DEBUG = false` for deployment: acquire GPS, send at the configured uplink DR,
 complete receive windows, then use the configured report interval (or longer if
 the MAC duty-cycle timer requires it). Button GPIO0 and fall GPIO7 use the
 original low/high wakeup polarities. Both modes validate button holds and handle
 real sensor events; an EXT0 wake alone does not mean SOS.
+
+### Main-project data rate
+
+`AppConfig::uplinkDataRate` in `include/tracker_app.h` is DR2
+(SF10/BW125). AS923 DR0 is SF12 and DR1 is SF11;
+do not use DR12 to request SF12. ADR remains disabled. The existing local
+uplink dwell-limit override remains disabled; use this only where the regional
+and network configuration legally permit no uplink dwell limit. Network MAC
+commands can still change session limits.
+
+Upload only this main project, without erasing flash. Use its normal soft-power
+button procedure to join/prepare. Serial prints the configured DR, requested TX
+DR, `sendReceive` result, and ACK result. Check the UG67 Traffic page for the
+actual uplink at SF10/BW125, then ChirpStack frames/events for DR2 and the ACK.
+A successful configuration log is not proof of RF transmission or delivery.
+Keep the payload, TX power, reporting interval, and gateway settings unchanged
+for this comparison. MAC limits can still extend the reporting interval.
 
 ### Button and soft power-off
 
 Short-click actions are selected on debounced release. Power-off and OTA holds
 start immediately once their three-second threshold is reached.
 
+OTAA join and uplink TX/RX waits also check pending power-off on the main task
+through a button-aware RadioLib HAL. Holding the button does not have to wait
+for the entire join/receive attempt to finish. Shutdown never starts inside an
+SPI transaction, and ordinary short presses do not pause radio receive timing.
+An interrupted radio exchange may be lost; the next user power-on starts a new
+join with the next durably reserved DevNonce. Release the button after the
+power-off sound to complete deep-sleep entry.
+
 | Current state | Hold before release | Action |
 | --- | --- | --- |
 | On | Three short presses, each under 1 second, within 1.5 seconds | Queue SOS (status 1) |
-| SOS/Fall alarm active | One short press | Stop the alarm and queue I am OK (status 3) |
+| SOS/Fall alarm active | One short press | Stop the alarm, play one local success melody, and queue I am OK (status 3); the melody does not indicate network delivery |
 | On | Hold 3 seconds or longer | Select soft power-off immediately; it sleeps after the button is released |
 | On | Two short presses, then hold the third press for 3 seconds | Start local Wi-Fi OTA mode immediately; release is not required |
 | On | Any other hold | No button event |
@@ -231,14 +277,81 @@ the buzzer is silenced before deep sleep.
 | Power off after a 3-second hold | Three falling notes, then sleeps after button release |
 | SOS or confirmed suspected fall | Same three high beeps with a pause, repeated until one short cancel press |
 | Off-route command during trip | Four high beeps with a pause, repeated until Route Clear |
-| Joining / acquiring initial GPS / awaiting Start / no ACK | Two low beeps, pause, repeats |
-| LoRaWAN uplink ACK received, with no active alarm | Three rising confirmation notes |
+| Initial Join / GPS acquisition still in progress | Two low beeps, pause, repeats |
+| Initial LoRa connection and GPS fix both ready | ACK confirmation melody once, then quiet while awaiting Start |
+| Initial LoRa connection or GPS acquisition fails | Error melody once, then quiet; no repeating error loop |
+| Automatic retry after preparation failure | Resume the same Join/GPS working melody; success or failure is reported once for the new attempt |
+| Awaiting application Start | Quiet; preparation telemetry ACKs do not repeat the success melody |
+| LoRaWAN uplink ACK during a trip, with no active alarm | Three rising confirmation notes |
+| No uplink ACK during a trip, with no active alarm | Error melody once for that transmission |
 | Local Wi-Fi OTA/AP mode starts | Alternating low/high notes, then one high confirmation note |
-| Enters deep sleep | One low confirmation beep |
+| Enters timed/report deep sleep | One low confirmation beep |
 
-The buzzer uses a small background task, so SOS, fall and LoRa connection
-loops do not block GNSS or radio work. Success and shutdown melodies are bounded
-foreground confirmations; firmware waits for shutdown audio before entering sleep.
+One background task exclusively owns the buzzer GPIO and LEDC peripheral.
+Commands carry a generation so cancellation also rejects a melody that the
+worker has already removed from its queue but has not started. Synchronous
+confirmations still run on that worker; the caller waits for completion.
+
+Power-off closes audio admission first, interrupts the current melody, discards
+queued feedback and plays the three falling PowerOff notes exactly once. The
+worker then detaches LEDC and drives the buzzer LOW before acknowledging
+shutdown. The device remains silent while waiting for button release and while
+stopping LoRa/GPS. Soft-off does **not** append the timed-sleep beep. All sleep
+paths also close audio admission before applying GPIO holds, so a late producer
+cannot restart the buzzer. Audio is available again after the next boot/wake.
+
+### Optional read-only Wi-Fi debug page
+
+Set `TRACKER_WEB_DEBUG` to `1` in `include/debug_web.h`, or add
+`-D TRACKER_WEB_DEBUG=1` to the existing PlatformIO `build_flags`, then build
+and upload. The default is `0`: no debug AP, HTTP task or debug buffers are
+started in normal builds. This flag is independent of `LORA_DEBUG`; keep
+`LORA_DEBUG=false` to debug real GPS and tracking.
+
+After turning the tracker on:
+
+1. Connect to Wi-Fi `Tracker-Debug-<prefix>` (`prefix` is the first six hexadecimal digits of the uppercase LoRaWAN DevEUI, including leading zeros). Devices sharing this prefix have the same AP name.
+2. Use the development password `TrackerDebug123` (configurable in
+   `include/debug_web.h`; change it for shared environments).
+3. Open [http://192.168.4.1](http://192.168.4.1). If the phone warns that this
+   Wi-Fi has no Internet, stay connected to it.
+
+The plain HTML page auto-refreshes once per second and has no control buttons
+apart from refresh/pause. It shows trip/preparation state, live GPS progress and
+satellite count, battery reading, last prepared coordinates/status/flags,
+last TX return code and network ACK, radio cooldown and free heap. Events mirror
+the firmware's Serial log through a shared console, on both USB/J1 and UART/J4
+configurations. The bounded RAM history retains the latest 64 line chunks
+(up to 159 characters each); long lines are split and older chunks are overwritten.
+It also captures firmware logs before AP startup and when USB is disconnected.
+ROM boot messages, panic output and libraries writing directly to hardware
+Serial/ESP logging are not intercepted. State and TX timestamps distinguish stale information while main-task
+operations are in progress; GPS progress is published independently by its
+owning task. History is lost on reset.
+
+When the AP is active, report sleep is **simulated with an awake wait**, so Wi-Fi
+does not disconnect between reports. Radio airtime/duty-cycle waits remain
+unchanged. This consumes more power and is not suitable for sleep-current or
+production battery-life measurement. Long-hold power-off and End Trip still
+shut the tracker down; the debug task is stopped before sleep. Entering OTA
+stops the debug AP/server first, then starts the existing OTA AP on port 80.
+If debug AP/task startup fails, the tracker falls back to normal sleep behavior.
+
+GPS progress logs include HDOP, GGA fix type, stable-fix count and a rejection
+reason such as `HDOP-too-high`, `stale-location`, `too-few-satellites`,
+`position-jump` or `waiting-stable-fixes`. The final progress line is also
+printed before timeout. Six satellites alone do not satisfy the
+quality requirements (HDOP <= 2.50, fresh autonomous/DGPS fix and three stable
+epochs spanning at least two seconds).
+
+The HTTP worker runs separately on core 0 and reads synchronized snapshots;
+it never calls LoRa, reads the GPS UART or changes trip state. The console tee
+only copies bytes into a fixed buffer; it never sends HTTP from the radio or
+GPS task. No keys or AP passwords are printed by this feature. Existing
+application downlink diagnostics and optionally enabled raw NMEA are mirrored,
+so the page may contain location and application payload data. HTTP is
+local and unencrypted; only use this development AP with trusted clients.
+Wi-Fi adds scheduling/power overhead: verify LoRa RX timing on real hardware.
 
 ### Local Wi-Fi OTA update
 
@@ -246,8 +359,10 @@ While the tracker is on, press S2 / GPIO0 twice shortly, then hold the third
 press for three seconds. OTA/AP mode starts immediately at the three-second
 threshold; releasing the button is not required. A third short press instead
 keeps the normal three-click SOS action.
-The tracker stops its radio and GNSS, starts the password-protected Wi-Fi hotspot
-`Tracker-OTA-XXXXXX`, and prints its name and address to Serial Monitor. Connect
+The tracker stops its radio and GNSS, replaces any previous audio loop with the
+OTA confirmation, then starts the password-protected Wi-Fi hotspot
+`Tracker-OTA-<prefix>` (the first six hexadecimal digits of the uppercase LoRaWAN DevEUI, including leading zeros; devices sharing this prefix have the same AP name) and prints its name and address to Serial Monitor. The OTA
+service loop continues checking the three-second power-off hold. Connect
 to that hotspot using the default password `TrackerOTA123` and open
 [http://192.168.4.1](http://192.168.4.1). Change `OtaManager::apPassword` in
 `include/ota_manager.h` to an 8-63 character ASCII password, then rebuild and upload.
@@ -301,7 +416,7 @@ Button and fall wakeups remain enabled in Low Power Mode.
 
 This Class A device receives queued commands in the receive windows after an
 uplink, not while sleeping. An API success only confirms broker acceptance; it
-does not prove the device has applied the command. The 15-byte uplink
+does not prove the device has applied the command. The 9-byte uplink
 reports `low_power_mode` in flags. The configured interval is wait/sleep time; GPS acquisition
 and radio processing add to the actual time between reports.
 
@@ -327,10 +442,14 @@ Before building with an older PlatformIO installation, upgrade its Core:
 - `include/board_pins.h`: custom V3 pin map.
 - `src/board_pins.cpp`: shared VEXT power and inactive actuator levels.
 - `src/debug_mode.cpp`: walking simulation and Serial monitor debug diagnostics.
+- `src/debug_web.cpp`: optional read-only debug AP/server, snapshots and bounded event history.
 - `src/device_button.cpp`: debounced holds, pending SOS and RTC soft-off state.
-- `src/audio_feedback.cpp`: GPIO4 audible state feedback.
-- `src/telemetry.cpp`: real/cached GPS readings and the 15-byte encoder.
+- `src/device_lifecycle.cpp`: terminal shutdown gate, PowerOff confirmation and button-release wait.
+- `src/audio_feedback.cpp`: single-worker buzzer ownership, generation cancellation and sleep barriers.
+- `src/audio_policy.cpp`: preparation/alarm/off-route priority and application/network ACK feedback.
+- `src/telemetry.cpp`: real/cached GPS readings and compact telemetry/device-info encoders.
 - `src/tracker_app.cpp`: wake-cycle orchestration, event priority, downlink dispatch and retry timing.
+- `src/tracking_watchdog.cpp`: hardware Task WDT subscription, bounded feeding and cleanup.
 - `src/trip_control.cpp`: RTC trip state, FPort 11 commands, latched alarms and I-am-OK delivery state.
 - `src/ota_manager.cpp`: local Wi-Fi OTA portal, update handoff and rollback confirmation.
 - `src/lorawan.cpp`: radio, OTAA activation, packet exchange and session persistence calls; no sleep scheduling.
@@ -339,15 +458,41 @@ Before building with an older PlatformIO installation, upgrade its Core:
 - `src/fall_detection.cpp`: ADXL362 SPI event detection and wakeup handling.
 
 `main.cpp` initializes components, then calls `TrackerApp::runCycle()`.
-The application calls `DeepSleep::timed()` after handling button actions; the
-button module calls `DeepSleep::powerOff()` after recording its RTC off state.
-Both paths share peripheral shutdown. The sensor driver only arms its own EXT1
+The application calls `DeepSleep::timed()` after handling button actions.
+Both a long button hold and an application End Trip command record the RTC
+off state through the button module, then use the same `DeviceLifecycle`
+shutdown coordinator. It owns the terminal shutdown state and calls
+`DeepSleep::powerOff()` after silencing audio and waiting for button release.
+Both sleep paths share peripheral shutdown. The sensor driver only arms its own EXT1
 wakeup; it never enters sleep. The radio returns a `LoRaResult` and does not
 interpret application commands, acknowledge sensor events or manage buttons.
 The application services buttons and fall detection during awake waits for trip/alert feedback.
 
+TripControl contains state transitions and consumable feedback snapshots, not
+audio-driver calls. The GPS driver reports `GnssStatus`; the application maps
+qualified fixes and acquisition failures into trip preparation state. LoRa
+remains owned by the main task while GPS acquisition runs on its existing
+dedicated task. Buffered RX tracing is controlled by
+`AppConfig::radioRxTrace` (currently enabled for diagnosis); disabling the
+trace changes logging only, not radio parameters or RX scheduling.
+
+### Refactor verification
+
+Run all host regressions with `node --test test/*.cjs`, then build with
+`pio run -e heltec_wifi_lora_32_V3`. The trip-flow regression compiles the whole
+production dispatcher against fake peripherals. Audio regressions run the
+production worker on host threads, including a forced pause after dequeue,
+queued ACK cancellation, SOS/Fall/working-loop shutdown and sleep GPIO gating.
+
+Hardware acceptance is still required: hold the power button during Join,
+GPS acquisition, Await Start, TX/RX and SOS/Fall; hear only one PowerOff melody,
+continue holding for several seconds and verify silence, then release and
+verify deep sleep. Repeat using End Trip, verify timed sleep and subsequent
+power-on, and measure the off-state current. Host tests do not establish
+physical buzzer levels, radio delivery or board sleep current.
+
 Normal GNSS acquisition accepts three distinct one-second GGA fixes spanning at
-least two seconds, with at least six satellites and HDOP <= 2.00. Data must be
+least two seconds, with at least six satellites and HDOP <= 2.50. Data must be
 fresh, and implausible jumps restart the stability check. Thresholds are in
 `include/tracker_app.h`. Acquisition still times out after 120 seconds before the
 first accepted fix, or 30 seconds afterwards. Timeout retains the last accepted
@@ -392,13 +537,29 @@ DevNonce reuse, so the small number of NVS writes around joins is intentional.
 Keep RTC memory powered during deep sleep (the ESP32 default for `RTC_DATA_ATTR`).
 Run `node test/session_recovery.cjs` for the host-side storage lifecycle tests.
 
-The 15-byte payload contains status, coordinates, diagnostic flags, firmware
-version and battery telemetry. ChirpStack's envelope `time` is the authoritative
-event timestamp.
-Latitude and longitude are little-endian float32.
+The primary FPort 2 payload is 9 bytes: status, coordinates, flags and battery
+percentage. Coordinates are signed normalized int24 little-endian, scaled by
+`8388607 / 90` for latitude and `8388607 / 180` for longitude. This gives steps
+of approximately 1.2 m latitude and up to 2.4 m longitude at the equator, not a
+guarantee of GPS accuracy. ChirpStack's envelope `time` is the event timestamp.
 
-Low battery is reported in flags bit 5 (`0x20`) without changing the 15-byte
-payload or Normal/SOS/Fall event codes. It enters at <=15% and clears at >=20%,
+FPort 3 carries firmware major/minor and battery millivolts in a separate 4-byte
+device-info packet. It is attempted once after the first normal/preparation
+uplink ACK per user power-on, in a later legal TX slot. Emergency/OK reports
+take priority. It does not retry if its ACK is lost. This extra startup packet
+costs airtime; the 9-byte saving applies to subsequent primary reports, not to
+the combined startup exchange. Applications must route FPort 3 separately and
+cache its fields per device; primary packets omit these measurements and the
+decoder returns `null` for them. Never treat those nulls as a battery failure or
+overwrite cached device-info fields with them. Device-info battery millivolts
+are a startup sample, not the current voltage of each primary report.
+
+Deploy the decoder below before flashing the new firmware. It accepts both
+new 9-byte and legacy 15-byte FPort 2 messages, plus FPort 3 device info. Legacy
+15-byte coordinates remain float32 little-endian. Downlinks are unchanged.
+
+Low battery is reported in flags bit 5 (`0x20`) without changing the
+Normal/SOS/Fall event codes. It enters at <=15% and clears at >=20%,
 configured in `include/tracker_app.h`. State is retained in RTC across deep sleep,
 not in NVS. An invalid ADC reading preserves the internal state but reports
 `low_battery: null`; it must not be treated as battery recovery. Battery percentage
@@ -411,28 +572,41 @@ Update the server decoder below to expose this field.
 
 Copy the JavaScript below into the device's **Payload formatters → Uplink** page.
 For ChirpStack, use the device profile's JavaScript codec with `decodeUplink(input)`.
-Select **Custom JavaScript formatter** and save. Use FPort `2` and the 15-byte
+Select **Custom JavaScript formatter** and save. Use FPort `2` and the 9-byte
 decrypted LoRaWAN application payload, not a raw radio packet.
 The `decodeUplink(input)` interface follows [The Things Stack documentation](https://www.thethingsindustries.com/docs/integrations/payload-formatters/javascript/uplink/).
 
 | Byte offset (zero-based) | Data |
 | --- | --- |
 | 0 | Status: 0 = normal, 1 = SOS, 2 = suspected fall, 3 = I am OK, 4 = preparation/waiting |
-| 1–4 | Latitude: float32 little-endian |
-| 5–8 | Longitude: float32 little-endian |
-| 9 | Flags: 0 fresh GNSS, 1 low power, 2 simulation, 3 initial fix ready, 4 battery valid, 5 low battery, 6 trip active, 7 off-route |
-| 10, 11 | Firmware major, minor version |
-| 12, 13 | Battery voltage in millivolts, uint16 little-endian |
-| 14 | Estimated Li-ion battery percentage, 0–100 |
+| 1–3 | Latitude: signed int24 LE × 90 / 8388607 |
+| 4–6 | Longitude: signed int24 LE × 180 / 8388607 |
+| 7 | Flags: 0 fresh GNSS, 1 low power, 2 simulation, 3 initial fix ready, 4 battery valid, 5 low battery, 6 trip active, 7 off-route |
+| 8 | Estimated Li-ion battery percentage, 0–100 |
+
+The signed int24 value `-8388608` is reserved for invalid coordinates; `0,0`
+still represents an unavailable initial fix as in the legacy format. All flags
+and event codes are retained. FPort 3: bytes 0/1 = firmware major/minor, bytes
+2/3 = battery mV uint16 LE (`0` = unavailable). Legacy FPort 2 uses status at 0,
+float32 coordinates at 1/5, flags at 9, firmware at 10/11, mV at 12/13 and % at 14.
 
 ```javascript
 function decodeUplink(input) {
     var bytes = input.bytes;
-    if (input.fPort !== 2) {
-        return { errors: ["Expected FPort 2"] };
+    if (input.fPort === 3) {
+        if (!bytes || bytes.length !== 4) return { errors: ["Expected 4 device-info bytes"] };
+        var infoMv = bytes[2] | (bytes[3] << 8);
+        return { data: {
+            message_type: "device_info",
+            firmware_version: bytes[0] + "." + bytes[1],
+            battery_mv: infoMv || null
+        }, warnings: [], errors: [] };
     }
-    if (!bytes || bytes.length !== 15) {
-        return { errors: ["Expected exactly 15 payload bytes"] };
+    if (input.fPort !== 2) {
+        return { errors: ["Expected FPort 2 or 3"] };
+    }
+    if (!bytes || (bytes.length !== 9 && bytes.length !== 15)) {
+        return { errors: ["Expected 9 compact or 15 legacy payload bytes"] };
     }
 
     // IEEE 754 float32, little-endian; compatible with ES5.1 formatters.
@@ -447,8 +621,14 @@ function decodeUplink(input) {
         return sign * (1 + fraction / 8388608) * Math.pow(2, exponent - 127);
     }
 
-    var latitude = float32LE(1);
-    var longitude = float32LE(5);
+    function int24LE(offset) {
+        var value = bytes[offset] | (bytes[offset + 1] << 8) | (bytes[offset + 2] << 16);
+        if (value & 0x800000) value -= 0x1000000;
+        return value === -8388608 ? NaN : value;
+    }
+    var compact = bytes.length === 9;
+    var latitude = compact ? int24LE(1) * 90 / 8388607 : float32LE(1);
+    var longitude = compact ? int24LE(4) * 180 / 8388607 : float32LE(5);
     if (!isFinite(latitude) || !isFinite(longitude) ||
         Math.abs(latitude) > 90 || Math.abs(longitude) > 180) {
         return { errors: ["Invalid latitude/longitude"] };
@@ -456,10 +636,12 @@ function decodeUplink(input) {
 
     var events = ["Normal Update", "SOS", "Fall Detected", "I am OK", "Trip Preparation"];
     var warnings = [];
-    var firmwareVersion = (bytes[10] || bytes[11])
+    var firmwareVersion = !compact && (bytes[10] || bytes[11])
         ? bytes[10] + "." + bytes[11] : null;
-    var flags = bytes[9];
-    var batteryMv = bytes[12] | (bytes[13] << 8);
+    var flags = bytes[compact ? 7 : 9];
+    var batteryMv = compact ? null : (bytes[12] | (bytes[13] << 8));
+    var batteryPercent = bytes[compact ? 8 : 14];
+    if ((flags & 16) && batteryPercent > 100) return { errors: ["Invalid battery percentage"] };
     if (bytes[0] > 4) warnings.push("Unknown status code");
     if (latitude === 0 && longitude === 0) {
         warnings.push("Coordinates are 0,0; GPS fix may be unavailable");
@@ -471,9 +653,9 @@ function decodeUplink(input) {
             latitude: latitude,
             longitude: longitude,
             battery_mv: (flags & 16) ? batteryMv : null,
-            battery_percent: (flags & 16) ? bytes[14] : null,
+            battery_percent: (flags & 16) ? batteryPercent : null,
             firmware_version: firmwareVersion,
-            flags: firmwareVersion === null ? null : {
+            flags: !compact && firmwareVersion === null ? null : {
                 gps_fresh: !!(flags & 1),
                 low_power_mode: !!(flags & 2),
                 debug_simulation: !!(flags & 4),
@@ -490,7 +672,12 @@ function decodeUplink(input) {
 }
 ```
 
-Test with FPort `2` and this hexadecimal payload:
+Compact example: FPort `2`, hex `023EE913777747300F` decodes to status 2,
+approximately latitude 14 / longitude 100.5, battery 15% and low battery true.
+The coordinate differences are quantization, not a change to the GPS filter.
+FPort `3`, hex `0103740E` reports firmware 1.3 and battery 3700 mV.
+
+Legacy compatibility example: test with FPort `2` and this 15-byte hexadecimal payload:
 
 ```text
 02000060410000C942300103740E0F

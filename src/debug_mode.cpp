@@ -1,3 +1,4 @@
+#include <tracker_log.h>
 #include <Arduino.h>
 #include <math.h>
 #include <debug_mode.h>
@@ -22,7 +23,7 @@ void begin(bool enabled, uint32_t intervalMs)
     active = enabled;
     sendInterval = max(intervalMs, uint32_t(1000));
     if (active) {
-        Serial.printf("[DEBUG] Initialized (interval: %lu ms, monitor only)\n", (unsigned long)sendInterval);
+        TrackerLog.printf("[DEBUG] Initialized (interval: %lu ms, monitor only)\n", (unsigned long)sendInterval);
     }
 }
 
@@ -53,7 +54,7 @@ Telemetry walking_sample(uint8_t status)
     lastStep = now;
     sample.lat = walkingLat;
     sample.lon = walkingLon;
-    Serial.printf("[SIMULATED WALK] LAT: %.6f, LON: %.6f, STATUS: %u\n",
+    TrackerLog.printf("[SIMULATED WALK] LAT: %.6f, LON: %.6f, STATUS: %u\n",
                   sample.lat, sample.lon, sample.status);
     return sample;
 }
@@ -61,13 +62,13 @@ Telemetry walking_sample(uint8_t status)
 void message(const char *message)
 {
     if (!active) return;
-    Serial.printf("[DEBUG] %s\n", message);
+    TrackerLog.printf("[DEBUG] %s\n", message);
 }
 
 void result(int16_t code)
 {
     if (!active) return;
-    Serial.printf("[DEBUG] Radio result: %d (%s)\n", code,
+    TrackerLog.printf("[DEBUG] Radio result: %d (%s)\n", code,
                   code < 0 ? "TX/RX error" : (code == 0 ? "Sent / no downlink" : "Downlink received"));
 }
 
@@ -76,7 +77,7 @@ void update(bool fallPending)
     if (!active) return;
     if (fallPending != lastFallPending) {
         lastFallPending = fallPending;
-        Serial.printf("[DEBUG] Fall pending: %s\n", fallPending ? "YES" : "NO");
+        TrackerLog.printf("[DEBUG] Fall pending: %s\n", fallPending ? "YES" : "NO");
     }
 }
 }

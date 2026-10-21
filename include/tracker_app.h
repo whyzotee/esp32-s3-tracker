@@ -13,7 +13,7 @@ constexpr uint32_t gpsTimeoutMs = 30 * 1000;
 // Must cover GNSS + LoRaWAN join/TX/RX.
 constexpr uint32_t trackingWatchdogMs = 5 * 60 * 1000;
 constexpr uint8_t gpsMinSatellites = 6;
-constexpr uint16_t gpsMaxHdopHundredths = 200; // HDOP <= 2.00, not an accuracy in metres.
+constexpr uint16_t gpsMaxHdopHundredths = 250; // HDOP <= 2.50, not an accuracy in metres.
 constexpr uint8_t gpsRequiredFixes = 3; // Distinct one-second GGA epochs.
 constexpr uint32_t gpsMaxFixAgeMs = 2000;
 constexpr double gpsMaxTrackingSpeedMps = 15.0;
@@ -23,13 +23,17 @@ constexpr uint32_t batteryBottomResistorOhms = 360000;
 constexpr uint8_t lowBatteryEnterPercent = 15;
 constexpr uint8_t lowBatteryExitPercent = 20;
 constexpr uint8_t uplinkPort = 2;
-constexpr uint8_t uplinkDataRate = 2; // SF10
+constexpr uint8_t deviceInfoPort = 3;
+// AS923 BW125: DR0=SF12, DR1=SF11, DR2=SF10.
+constexpr uint8_t uplinkDataRate = 2;
+// Buffered diagnostics only; changing this must not alter radio configuration.
+constexpr bool radioRxTrace = true;
 }
 
 // Update these values for each released firmware build.
 namespace FirmwareVersion {
 constexpr uint8_t major = 1;
-constexpr uint8_t minor = 3;
+constexpr uint8_t minor = 4;
 }
 
 namespace TrackerApp {

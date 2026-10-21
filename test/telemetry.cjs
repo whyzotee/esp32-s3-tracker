@@ -13,6 +13,7 @@ const program = `
 #include <cstring>
 #include <cassert>
 #include <cmath>
+#include <initializer_list>
 constexpr double DEG_TO_RAD = 3.141592653589793 / 180;
 uint32_t clockMs = 0;
 uint32_t millis() { return 0; } // Simulate uptime restarting on every wake.
@@ -28,14 +29,35 @@ int main() {
     uint8_t payload[TELEMETRY_PAYLOAD_SIZE];
     memset(payload, 0xff, sizeof(payload));
     encode_telemetry(s, payload);
-    const uint8_t expected[] = {2,0,0,96,65,0,0,201,66,0,
-                                FirmwareVersion::major, FirmwareVersion::minor,
-                                116,14,15};
-    assert(sizeof(payload) == sizeof(expected));
-    assert(memcmp(payload, expected, sizeof(expected)) == 0);
+    const auto decode = [](const uint8_t* p,double range) {
+        int32_t n = p[0] | (p[1]<<8) | (p[2]<<16);
+        if(n & 0x800000) n-=0x1000000;
+        return n * range / 8388607.0;
+    };
+    assert(sizeof(payload)==9 && payload[0]==2 && payload[7]==0 && payload[8]==15);
+    const uint8_t compactExpected[]={2,62,233,19,119,119,71,0,15};
+    assert(memcmp(payload,compactExpected,9)==0);
+    assert(fabs(decode(payload+1,90)-14)<90.0/8388607);
+    assert(fabs(decode(payload+4,180)-100.5)<180.0/8388607);
+    uint8_t info[DEVICE_INFO_PAYLOAD_SIZE];
+    s.flags=TelemetryFlags::batteryValid;
+    encode_device_info(s,info);
+    const uint8_t expected[] = {FirmwareVersion::major,FirmwareVersion::minor,116,14};
+    assert(sizeof(info)==sizeof(expected) && memcmp(info,expected,sizeof(info))==0);
     s.flags = TelemetryFlags::batteryValid | TelemetryFlags::lowBattery;
     encode_telemetry(s, payload);
-    assert(sizeof(payload)==15 && payload[9]==0x30 && payload[0]==2);
+    assert(sizeof(payload)==9 && payload[7]==0x30 && payload[0]==2);
+    for(float lat : {-90.f, -13.7f, 0.f, 13.7f, 90.f}) {
+      for(float lon : {-180.f,-100.7f,0.f,100.7f,180.f}) {
+        s.lat=lat; s.lon=lon; encode_telemetry(s,payload);
+        assert(fabs(decode(payload+1,90)-lat)<=90.0/8388607/2+1e-12);
+        assert(fabs(decode(payload+4,180)-lon)<=180.0/8388607/2+1e-12);
+      }
+    }
+    s.lat=NAN; s.lon=181; encode_telemetry(s,payload);
+    assert(payload[1]==0 && payload[2]==0 && payload[3]==0x80);
+    assert(payload[4]==0 && payload[5]==0 && payload[6]==0x80);
+    s.flags=0; encode_device_info(s,info); assert(info[2]==0 && info[3]==0);
     auto a = walking_sample(0);
     assert(fabs(a.lat - 13.7563) < 0.00001);
     clockMs = 15000;
@@ -50,6 +72,6 @@ int main() {
 `;
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tracker-telemetry-'));
 const binary = path.join(dir, 'test');
-cp.execFileSync('c++', ['-std=c++17', '-Iinclude', '-x', 'c++', '-', '-o', binary], {input: program});
+cp.execFileSync('c++', ['-std=c++17', '-DTRACKER_LOG_HOST_TEST', '-DTrackerLog=Serial' , '-DTRACKER_WEB_DEBUG=0', '-Iinclude', '-x', 'c++', '-', '-o', binary], {input: program});
 cp.execFileSync(binary);
 console.log('Payload compatibility and simulated walking tests passed');

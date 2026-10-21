@@ -1,8 +1,10 @@
+#include <tracker_log.h>
 #include <Arduino.h>
 #include <audio_feedback.h>
+#include <audio_policy.h>
 #include <device_button.h>
+#include <device_lifecycle.h>
 #include <board_pins.h>
-#include <deep_sleep.h>
 #include <trip_control.h>
 #include <fall_detection.h>
 #include <driver/rtc_io.h>
@@ -25,18 +27,7 @@ bool otaHoldCandidate = false;
     poweredOff = true;
     pendingSos = false;
     pendingOta = false;
-    TripControl::reset();
-    acknowledge_fall_detection();
-    AudioFeedback::playAndWait(AudioFeedback::Event::PowerOff);
-
-    // GPIO0 is also the active-low EXT0 wake source.  Entering deep sleep
-    // while it is still held would wake the ESP32 immediately.  The power-off
-    // decision has already been made at the hold threshold; wait here so the
-    // user can release at any convenient time rather than having to time it.
-    Serial.println("[POWER] Off selected; release button to finish shutdown");
-    while (digitalRead(Board::button) == LOW) delay(10);
-    delay(40); // release debounce before arming EXT0
-    DeepSleep::powerOff();
+    DeviceLifecycle::powerOff();
 }
 
 void monitor(void *)
@@ -46,6 +37,7 @@ void monitor(void *)
     uint32_t changedAt = millis();
     uint32_t pressedAt = changedAt;
     for (;;) {
+        if (DeviceLifecycle::shuttingDown()) { delay(10); continue; }
         bool sosQueued = false;
         bool otaQueued = false;
         bool cancelled = false;
@@ -103,18 +95,29 @@ void monitor(void *)
             pendingOff = true;
         }
         portEXIT_CRITICAL(&lock);
-        if (cancelled) TripControl::refreshAudio();
+        if (cancelled) AudioPolicy::refresh();
         if (sosQueued) {
-            TripControl::refreshAudio();
-            Serial.println("[BUTTON] SOS queued (three clicks)");
+            AudioPolicy::refresh();
+            TrackerLog.println("[BUTTON] SOS queued (three clicks)");
         }
-        if (otaQueued) Serial.println("[BUTTON] OTA mode queued (two clicks + 3-second hold)");
+        if (otaQueued) TrackerLog.println("[BUTTON] OTA mode queued (two clicks + 3-second hold)");
         delay(10);
     }
 }
 }
 
 namespace DeviceButton {
+void servicePowerOff()
+{
+    // Shutdown itself can call RadioLib while putting the PHY to sleep.
+    if (DeviceLifecycle::shuttingDown()) return;
+    portENTER_CRITICAL(&lock);
+    const bool turnOff = pendingOff;
+    portEXIT_CRITICAL(&lock);
+    if (!turnOff) return;
+    sleepOff();
+}
+
 void begin()
 {
     rtc_gpio_deinit(Board::button);
@@ -137,7 +140,7 @@ void begin()
         if (classify(true, uint32_t(releasedAt - start)) != Action::PowerOn) sleepOff();
         poweredOff = false;
         startedFromOff = true;
-        Serial.println("[POWER] On");
+        TrackerLog.println("[POWER] On");
         AudioFeedback::playAndWait(AudioFeedback::Event::PowerOn);
     }
     held = digitalRead(Board::button) == LOW;
@@ -157,8 +160,8 @@ void service()
 {
     if (TripControl::takeCancellation()) {
         acknowledge_fall_detection();
-        TripControl::refreshAudio();
-        Serial.println("[BUTTON] I am OK; cancellation report queued");
+        AudioPolicy::refresh();
+        TrackerLog.println("[BUTTON] I am OK; cancellation report queued");
     }
     while (true) {
         portENTER_CRITICAL(&lock);

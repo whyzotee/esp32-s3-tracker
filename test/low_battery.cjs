@@ -40,7 +40,7 @@ int main() {
 }
 `;
     const binary = path.join(dir, 'test');
-    cp.execFileSync('c++', ['-std=c++17', '-Iinclude', '-x', 'c++', '-', '-o', binary], {input: program});
+    cp.execFileSync('c++', ['-std=c++17', '-DTRACKER_LOG_HOST_TEST', '-DTrackerLog=Serial' , '-DTRACKER_WEB_DEBUG=0', '-Iinclude', '-x', 'c++', '-', '-o', binary], {input: program});
     cp.execFileSync(binary);
     const readme = fs.readFileSync('README.md', 'utf8');
     const decoder = readme.match(/```javascript\s*([\s\S]*?function decodeUplink[\s\S]*?)```/);

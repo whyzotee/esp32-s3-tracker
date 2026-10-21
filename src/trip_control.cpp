@@ -1,6 +1,5 @@
 #include <Arduino.h>
 #include <trip_control.h>
-#include <audio_feedback.h>
 
 namespace {
 RTC_DATA_ATTR bool initialFix = false;
@@ -11,8 +10,15 @@ RTC_DATA_ATTR bool alarmLatched = false;
 RTC_DATA_ATTR bool wellbeing = false;
 RTC_DATA_ATTR bool lastAcknowledged = false;
 RTC_DATA_ATTR uint32_t generation = 0;
+using TripControl::Preparation;
+uint8_t pendingReceipts = 0;
+RTC_DATA_ATTR Preparation preparation = Preparation::Working;
+RTC_DATA_ATTR bool loraConnected = false;
+RTC_DATA_ATTR bool preparationNotified = false;
 bool cancellation = false;
+bool cancellationFeedback = false;
 portMUX_TYPE tripLock = portMUX_INITIALIZER_UNLOCKED;
+
 struct Guard {
     Guard() { portENTER_CRITICAL(&tripLock); }
     ~Guard() { portEXIT_CRITICAL(&tripLock); }
@@ -24,22 +30,54 @@ void reset() {
     Guard guard;
     initialFix = startRequested = finishRequested = outsideRoute = false;
     alarmLatched = wellbeing = cancellation = lastAcknowledged = false;
+    preparation = Preparation::Working;
+    loraConnected = preparationNotified = false;
+    pendingReceipts = 0;
+    cancellationFeedback = false;
     ++generation;
 }
+
 Phase phase() {
     Guard guard;
     return !initialFix ? Phase::Preparing
         : (startRequested ? Phase::Travelling : Phase::Waiting);
 }
+
 bool initialFixReady() { Guard guard; return initialFix; }
-void markInitialFix() { Guard guard; initialFix = true; }
+void markInitialFix() {
+    Guard guard;
+    initialFix = true;
+    if (loraConnected && preparation == Preparation::Working) preparation = Preparation::Ready;
+}
+
+void markLoRaConnected() {
+    Guard guard;
+    loraConnected = true;
+    if (initialFix && preparation == Preparation::Working) preparation = Preparation::Ready;
+}
+
+void preparationFailed() {
+    Guard guard;
+    if (preparation == Preparation::Working) preparation = Preparation::Failed;
+}
+
+bool retryPreparation() {
+    Guard guard;
+    if (preparation != Preparation::Failed) return false;
+    preparation = Preparation::Working;
+    preparationNotified = false;
+    loraConnected = false;
+    return true;
+}
+
 bool handleDownlink(uint8_t port, const uint8_t *data, size_t length) {
     if (port != 11 || data == nullptr || length != 1) return false;
     if (data[0] == 5 || data[0] == 6) {
         // Application receipt is separate from the network ACK. Queue a success
         // suffix after the current alarm phrase without stopping its loop or
         // clearing pending delivery. Ignore late receipts after cancellation.
-        if (alarmActive()) AudioFeedback::play(AudioFeedback::Event::LoRaConnected);
+        Guard guard;
+        if (alarmLatched && pendingReceipts < 4) ++pendingReceipts;
         return true;
     }
     Guard guard;
@@ -61,6 +99,7 @@ void raiseAlarm() {
     // A newer emergency supersedes an unsent OK from an older cancellation.
     // Never send "I am OK" for a newly active alarm that has not been cancelled.
     wellbeing = false;
+    cancellationFeedback = false;
     ++generation;
 }
 bool alarmActive() { Guard guard; return alarmLatched; }
@@ -68,7 +107,9 @@ bool cancelAlarm() {
     Guard guard;
     if (!alarmLatched) return false;
     alarmLatched = false;
+    pendingReceipts = 0;
     wellbeing = cancellation = true;
+    cancellationFeedback = true;
     ++generation;
     return true;
 }
@@ -90,17 +131,16 @@ bool keepAwake() {
     return !initialFix || !startRequested || outsideRoute || alarmLatched ||
         wellbeing || !lastAcknowledged;
 }
-void refreshAudio() {
-    bool alert, outside, working;
-    {
-        Guard guard;
-        alert = alarmLatched;
-        outside = outsideRoute;
-        working = !initialFix || !startRequested || !lastAcknowledged;
-    }
-    if (alert) AudioFeedback::startLoop(AudioFeedback::Event::Sos);
-    else if (outside) AudioFeedback::startLoop(AudioFeedback::Event::Fall);
-    else if (working) AudioFeedback::startLoop(AudioFeedback::Event::LoRaJoining);
-    else AudioFeedback::silence();
+Feedback takeFeedback() {
+    Guard guard;
+    const bool notify = !alarmLatched && !outsideRoute &&
+        preparation != Preparation::Working && !preparationNotified;
+    if (notify) preparationNotified = true;
+    const Feedback feedback{alarmLatched, outsideRoute, preparation, notify,
+                            uint8_t(alarmLatched ? pendingReceipts : 0),
+                            cancellationFeedback};
+    pendingReceipts = 0;
+    cancellationFeedback = false;
+    return feedback;
 }
 }

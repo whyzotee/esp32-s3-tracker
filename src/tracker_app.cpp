@@ -1,9 +1,10 @@
+#include <tracker_log.h>
 #include <Arduino.h>
-#include <audio_feedback.h>
+#include <audio_policy.h>
 #include <tracker_app.h>
 #include <battery.h>
-#include <board_pins.h>
 #include <debug_mode.h>
+#include <debug_web.h>
 #include <deep_sleep.h>
 #include <device_button.h>
 #include <fall_detection.h>
@@ -15,34 +16,40 @@
 #include <ota_manager.h>
 #include <power_mode.h>
 #include <telemetry.h>
+#include <gnss.h>
 #include <trip_control.h>
-#include <esp_timer.h>
-#include <esp_task_wdt.h>
-#include <mutex>
-
-static_assert(CONFIG_ESP_TASK_WDT_EN && CONFIG_ESP_TASK_WDT_INIT && CONFIG_ESP_TASK_WDT_PANIC,
-              "Tracking requires the framework hardware Task WDT with panic/reboot enabled");
-static_assert(CONFIG_ESP_TASK_WDT_TIMEOUT_S >= 3,
-              "Tracking heartbeat needs a Task WDT timeout of at least 3 seconds");
-static_assert(AppConfig::trackingWatchdogMs > AppConfig::firstGpsTimeoutMs,
-              "Tracking watchdog must allow first GNSS acquisition");
 
 namespace {
-esp_timer_handle_t trackingWatchdog = nullptr;
-esp_task_wdt_user_handle_t trackingUser = nullptr;
-int64_t trackingStartedUs = 0;
-std::mutex trackingWatchdogMutex;
-
-void feedTrackingWatchdog(void *)
+void publishDebugState(bool force = false)
 {
-    // Synchronize with deletion on the Arduino task; no print/flush in callback.
-    const std::lock_guard<std::mutex> lock(trackingWatchdogMutex);
-    if (trackingUser != nullptr && esp_timer_get_time() - trackingStartedUs <
-        int64_t(AppConfig::trackingWatchdogMs) * 1000) {
-        ESP_ERROR_CHECK(esp_task_wdt_reset_user(trackingUser));
+    if (!DebugWeb::active()) return;
+    static uint32_t lastUpdate = 0;
+    if (!force && uint32_t(millis() - lastUpdate) < 1000) return;
+    lastUpdate = millis();
+    const BatteryReading battery = Battery::bootReading();
+    DebugWeb::State state;
+    state.phase = uint8_t(TripControl::phase());
+    state.gps = uint8_t(gnss_status());
+    state.initialFix = TripControl::initialFixReady();
+    state.alarm = TripControl::alarmActive();
+    state.offRoute = TripControl::offRoute();
+    state.lowPower = PowerMode::enabled();
+    state.batteryValid = battery.valid;
+    state.batteryMv = battery.millivolts;
+    state.batteryPercent = battery.percent;
+    state.radioWaitMs = lora_wait_ms();
+    DebugWeb::publish(state);
+}
+
+void serviceGps()
+{
+    service_gnss();
+    switch (gnss_status()) {
+    case GnssStatus::FixReady: TripControl::markInitialFix(); break;
+    case GnssStatus::Unavailable:
+    case GnssStatus::TimedOut: TripControl::preparationFailed(); break;
+    case GnssStatus::Searching: break;
     }
-    // Past the deadline, or if this timer task stalls, no heartbeat reaches
-    // the hardware-backed Task WDT. Its normal timeout/panic triggers recovery.
 }
 
 uint32_t reportInterval()
@@ -53,30 +60,32 @@ uint32_t reportInterval()
     return DebugMode::enabled() ? DebugMode::interval() : PowerMode::reportInterval();
 }
 
-[[noreturn]] void startOtaIfRequested()
+void serviceOta()
 {
     if (DeviceButton::otaPending()) OtaManager::run(reportInterval());
-    // Only called when an OTA request exists.
-    while (true) delay(1000);
 }
 
 void sleepFor(uint32_t durationMs, uint32_t minimumMs = 0)
 {
     DeviceButton::service();
-    if (DeviceButton::otaPending()) startOtaIfRequested();
-    TripControl::refreshAudio();
-    if (!TripControl::keepAwake()) DeepSleep::timed(durationMs, minimumMs);
+    serviceOta();
+    AudioPolicy::refresh();
+    const bool wouldSleep = !TripControl::keepAwake();
+    if (wouldSleep && !DebugWeb::active()) DeepSleep::timed(durationMs, minimumMs);
+    if (wouldSleep) DebugWeb::note("Report sleep simulated; Wi-Fi stays active");
     // Continuous sound needs an awake MCU. Never bypass the radio wait.
     const uint32_t waitMs = max(durationMs, minimumMs);
-    Serial.printf("[WAIT] Awake for %lu ms; trip/alarm/ACK feedback active\n",
+    TrackerLog.printf("[WAIT] Awake for %lu ms; trip/alarm/ACK feedback active\n",
                   static_cast<unsigned long>(waitMs));
     const uint32_t started = millis();
     uint32_t heartbeat = started;
     while (uint32_t(millis() - started) < waitMs) {
         DeviceButton::service();
-        if (DeviceButton::otaPending()) startOtaIfRequested();
+        if (!DebugMode::enabled()) serviceGps();
+        serviceOta();
         update_fall_detection(false);
-        TripControl::refreshAudio();
+        AudioPolicy::refresh();
+        publishDebugState();
         // Renew only from the progressing main loop, never a timer callback.
         if (uint32_t(millis() - heartbeat) >= 60000) {
             TrackerApp::endWatchdog();
@@ -91,33 +100,31 @@ void sleepFor(uint32_t durationMs, uint32_t minimumMs = 0)
 void handleDownlink(const LoRaResult &result)
 {
     if (result.code <= 0) return;
-    Serial.printf("[APP] Downlink: port=%u bytes=%u payload(hex)=",
+    TrackerLog.printf("[APP] Downlink: port=%u bytes=%u payload(hex)=",
                   result.downlinkPort, unsigned(result.downlinkLength));
     for (size_t i = 0; i < result.downlinkLength; ++i)
-        Serial.printf("%s%02X", i == 0 ? "" : " ", result.downlink[i]);
-    Serial.println();
+        TrackerLog.printf("%s%02X", i == 0 ? "" : " ", result.downlink[i]);
+    TrackerLog.println();
     if (result.downlinkLength == 0) {
-        Serial.println("[APP] No application payload; no Low Power command applied");
+        TrackerLog.println("[APP] No application payload; no Low Power command applied");
         return;
     }
     if (TripControl::handleDownlink(result.downlinkPort, result.downlink, result.downlinkLength)) {
-        Serial.printf("[TRIP] Command=%u phase=%u initial_fix=%s off_route=%s\n",
+        TrackerLog.printf("[TRIP] Command=%u phase=%u initial_fix=%s off_route=%s\n",
                       result.downlink[0], unsigned(TripControl::phase()),
                       TripControl::initialFixReady() ? "yes" : "no",
                       TripControl::offRoute() ? "yes" : "no");
         if (TripControl::endRequested()) DeviceButton::powerOff();
     } else if (PowerMode::handleDownlink(result.downlinkPort, result.downlink, result.downlinkLength)) {
-        Serial.printf("[APP] Low Power %s: interval %lu ms (RTC only)\n",
+        TrackerLog.printf("[APP] Low Power %s: interval %lu ms (RTC only)\n",
                       PowerMode::enabled() ? "enabled" : "disabled",
                       static_cast<unsigned long>(reportInterval()));
     } else {
-        Serial.printf("[APP] Ignored downlink: port=%u bytes=%u\n",
+        TrackerLog.printf("[APP] Ignored downlink: port=%u bytes=%u\n",
                       result.downlinkPort, unsigned(result.downlinkLength));
     }
 }
-}
 
-namespace {
 uint8_t nextStatus()
 {
     if (fall_detection_pending()) return 2;
@@ -134,6 +141,7 @@ Telemetry makeSample(uint8_t status, bool debug)
         return sample;
     }
     Telemetry sample = debug ? DebugMode::walking_sample(status) : read_telemetry(status);
+    if (!debug) serviceGps();
     if (debug || (sample.flags & TelemetryFlags::gpsFresh) != 0)
         TripControl::markInitialFix();
     return sample;
@@ -141,61 +149,54 @@ Telemetry makeSample(uint8_t status, bool debug)
 }
 
 namespace TrackerApp {
-void beginWatchdog()
-{
-    const std::lock_guard<std::mutex> lock(trackingWatchdogMutex);
-    if (trackingWatchdog != nullptr) return;
-    esp_timer_create_args_t config{};
-    config.callback = feedTrackingWatchdog;
-    config.dispatch_method = ESP_TIMER_TASK;
-    config.name = "tracker-wdt-feed";
-    ESP_ERROR_CHECK(esp_timer_create(&config, &trackingWatchdog));
-    trackingStartedUs = esp_timer_get_time();
-    ESP_ERROR_CHECK(esp_task_wdt_add_user("tracker-cycle", &trackingUser));
-    ESP_ERROR_CHECK(esp_timer_start_periodic(trackingWatchdog, 1000000));
-    Serial.printf("[WDT] Hardware Task WDT armed; tracking budget: %lu ms\n",
-                  static_cast<unsigned long>(AppConfig::trackingWatchdogMs));
-    // Never extend trackingStartedUs from acquisition/radio loops.
-}
-
-void endWatchdog()
-{
-    const std::lock_guard<std::mutex> lock(trackingWatchdogMutex);
-    if (trackingWatchdog == nullptr) return;
-    const esp_err_t state = esp_timer_stop(trackingWatchdog);
-    if (state != ESP_ERR_INVALID_STATE) ESP_ERROR_CHECK(state);
-    ESP_ERROR_CHECK(esp_timer_delete(trackingWatchdog));
-    trackingWatchdog = nullptr;
-    ESP_ERROR_CHECK(esp_task_wdt_delete_user(trackingUser));
-    trackingUser = nullptr;
-}
-
 void runCycle()
 {
     beginWatchdog(); // Idempotent: setup already armed it before peripheral init.
     DeviceButton::service();
-    if (DeviceButton::otaPending()) startOtaIfRequested();
+    serviceOta();
     const bool debug = DebugMode::enabled();
     update_fall_detection(debug);
     DebugMode::update(fall_detection_pending());
+    const bool retryingPreparation = TripControl::retryPreparation();
     TripControl::setAcknowledged(false); // A new work/TX cycle is in progress.
-    TripControl::refreshAudio();
+    AudioPolicy::refresh();
+    publishDebugState(true);
 
+    if (!debug) start_gnss_acquisition(retryingPreparation);
     if (!setup_lora_wan_app()) {
+        DebugWeb::joined(false);
         DebugMode::message("LoRa init/join failed");
-        TripControl::setAcknowledged(false);
+        TripControl::preparationFailed();
         return sleepFor(AppConfig::retryInitialMs);
     }
-    if (DeviceButton::otaPending()) startOtaIfRequested();
+    TripControl::markLoRaConnected();
+    DebugWeb::joined(true);
+    if (!debug) serviceGps();
+    publishDebugState(true);
+    serviceOta();
     if (lora_wait_ms() > 0)
         return sleepFor(max(uint32_t(1000), lora_wait_ms()), lora_wait_ms());
+
+    // Metadata uses a later legal TX slot, after the first primary ACK.
+    // A pending SOS, fall or I-am-OK report always takes precedence.
+    if (lora_device_info_due() && (nextStatus() == 0 || nextStatus() == 4)) {
+        const BatteryReading battery = Battery::bootReading();
+        Telemetry info{};
+        info.batteryMv = battery.millivolts;
+        if (battery.valid) info.flags |= TelemetryFlags::batteryValid;
+        const LoRaResult result = send_lora_device_info(info);
+        DebugWeb::transmission(result.code, result.acknowledged, AppConfig::deviceInfoPort);
+        TripControl::setAcknowledged(result.acknowledged);
+        handleDownlink(result);
+        return sleepFor(max(reportInterval(), lora_wait_ms()), lora_wait_ms());
+    }
 
     Telemetry sample = makeSample(nextStatus(), debug);
 
     // Acquisition can block. Capture events that arrived before transmitting.
     DeviceButton::service();
     update_fall_detection(false);
-    if (DeviceButton::otaPending()) startOtaIfRequested();
+    serviceOta();
     // An event may arrive while normal telemetry is waiting for GNSS. Rebuild
     // from RTC-cached coordinates so the urgent packet cannot retain a 0,0
     // normal sample with only its status byte changed.
@@ -217,18 +218,18 @@ void runCycle()
     if (battery.valid && battery.low) sample.flags |= TelemetryFlags::lowBattery;
     // Log the final sample only. A button/fall event can occur while a normal
     // GPS sample is being acquired and replace it with an urgent packet.
-    Serial.printf("[TX] LAT: %.6f, LON: %.6f, STATUS: %u\n",
+    TrackerLog.printf("[TX] LAT: %.6f, LON: %.6f, STATUS: %u\n",
                   sample.lat, sample.lon, sample.status);
+    DebugWeb::telemetry(sample.lat, sample.lon, sample.status, sample.flags);
+    publishDebugState(true);
 
     const uint32_t sentRevision = TripControl::revision();
     const LoRaResult result = send_lora_telemetry(sample);
+    DebugWeb::transmission(result.code, result.acknowledged, AppConfig::uplinkPort);
     DebugMode::result(result.code);
     TripControl::setAcknowledged(result.acknowledged);
-    if (result.acknowledged && !TripControl::alarmActive() && !TripControl::offRoute()) {
-        AudioFeedback::silence();
-        AudioFeedback::playAndWait(AudioFeedback::Event::LoRaConnected);
-    }
     handleDownlink(result);
+    AudioPolicy::transmissionResult(result.acknowledged);
     if (result.delivered(sample.status) && TripControl::revision() == sentRevision) {
         if (sample.status == 2) acknowledge_fall_detection();
         if (sample.status == 1) DeviceButton::acknowledgeSos();

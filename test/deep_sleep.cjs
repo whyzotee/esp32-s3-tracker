@@ -65,8 +65,10 @@ inline void esp_sleep_enable_timer_wakeup(uint64_t value) { timer = value; }
 #include <cassert>
 #include "deep_sleep.cpp"
 void reset() { calls.clear(); timer = 99; ext1 = true; sos = false; sensorReady = true; }
-void checkShutdown() {
-    assert((calls == std::vector<int>{0, 1, 2, 3, 4, 5, 6, 8, 7}));
+void checkShutdown(bool off = false) {
+    const auto expected = off ? std::vector<int>{0, 1, 2, 3, 5, 6, 8, 7}
+                              : std::vector<int>{0, 1, 2, 3, 4, 5, 6, 8, 7};
+    assert(calls == expected);
 }
 int main() {
     reset();
@@ -89,12 +91,12 @@ int main() {
     assert(timer == 60000000 && ext1); checkShutdown();
     reset();
     try { DeepSleep::powerOff(); } catch (Sleeping &) {}
-    assert(timer == 0 && !ext1); checkShutdown();
+    assert(timer == 0 && !ext1); checkShutdown(true);
 }
 `);
     const root = path.resolve(__dirname, '..');
     const binary = path.join(dir, 'test');
-    cp.execFileSync('c++', ['-std=c++17', `-I${dir}`,
+    cp.execFileSync('c++', ['-std=c++17', '-DTRACKER_LOG_HOST_TEST', '-DTrackerLog=Serial' , '-DTRACKER_WEB_DEBUG=0', `-I${dir}`,
         `-I${path.join(root, 'include')}`, `-I${path.join(root, 'src')}`,
         path.join(dir, 'test.cpp'), '-o', binary]);
     cp.execFileSync(binary);

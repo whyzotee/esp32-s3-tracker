@@ -19,6 +19,9 @@ constexpr bool isSosClick(uint32_t heldMs) { return heldMs < sosClickMaxMs; }
 void begin();
 // Wait for release and apply pending power-off, outside radio transactions.
 void service();
+// Non-blocking unless power-off was requested; safe for radio wait loops.
+// Must run on the main task, never from an ISR or the button monitor task.
+void servicePowerOff();
 bool sosPending();
 void acknowledgeSos();
 bool otaPending();

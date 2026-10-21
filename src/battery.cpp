@@ -1,3 +1,4 @@
+#include <tracker_log.h>
 #include <Arduino.h>
 #include <tracker_app.h>
 #include <battery.h>
@@ -64,7 +65,7 @@ BatteryReading read()
 
     BatteryReading result{};
     if (batteryMv < minimumValidMv || batteryMv > maximumValidMv) {
-        Serial.printf("[BAT] Invalid ADC reading: %lu mV at GPIO%d\n",
+        TrackerLog.printf("[BAT] Invalid ADC reading: %lu mV at GPIO%d\n",
                       static_cast<unsigned long>(batteryMv), Board::batteryAdc);
         return result;
     }
@@ -73,9 +74,9 @@ BatteryReading read()
     result.valid = true;
     lowBattery = Battery::classifyLow(lowBattery, result.percent, result.valid);
     result.low = lowBattery;
-    Serial.printf("[BAT] %u mV (%u%%), ADC=%lu mV\n", result.millivolts,
+    TrackerLog.printf("[BAT] %u mV (%u%%), ADC=%lu mV\n", result.millivolts,
                   result.percent, static_cast<unsigned long>(adcMv));
-    Serial.printf("[BAT] Low Battery: %s\n", result.low ? "ON" : "OFF");
+    TrackerLog.printf("[BAT] Low Battery: %s\n", result.low ? "ON" : "OFF");
     return result;
 }
 }

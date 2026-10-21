@@ -1,3 +1,4 @@
+#include <tracker_log.h>
 #include <Arduino.h>
 #include <RadioLib.h>
 #include <SPI.h>
@@ -5,6 +6,7 @@
 #include <board_pins.h>
 #include <battery.h>
 #include <lorawan_storage.h>
+#include <device_button.h>
 #if __has_include(<lorawan.h>)
 #include <lorawan.h>
 #else
@@ -12,17 +14,154 @@
 #endif
 
 namespace {
-SX1262 radio = new Module(Board::radioCs, Board::radioDio1, Board::radioReset, Board::radioBusy);
+// Run shutdown on the radio's owning task, not concurrently from the button
+// worker. Short clicks must not stall RX timing. Never re-enter SPI mid-command.
+class ButtonRadioHal : public ArduinoHal {
+public:
+    ButtonRadioHal() : ArduinoHal(SPI) {}
+    bool responsive = false;
+    void spiBeginTransaction() override {
+        inTransaction = true;
+        ArduinoHal::spiBeginTransaction();
+    }
+    void spiEndTransaction() override {
+        ArduinoHal::spiEndTransaction();
+        inTransaction = false;
+    }
+    void yield() override {
+        ArduinoHal::yield();
+        poll();
+    }
+    void delay(RadioLibTime_t ms) override {
+        if (!responsive || inTransaction) {
+            ArduinoHal::delay(ms);
+            return;
+        }
+        // Keep the original deadline instead of adding a button debounce wait
+        // to each RX-window delay. Microsecond radio timings are untouched.
+        const RadioLibTime_t start = ArduinoHal::millis();
+        poll();
+        for (;;) {
+            const RadioLibTime_t elapsed = ArduinoHal::millis() - start;
+            if (elapsed >= ms) break;
+            const RadioLibTime_t remaining = ms - elapsed;
+            ArduinoHal::delay(remaining > 10 ? 10 : remaining);
+            poll();
+        }
+    }
+private:
+    bool inTransaction = false;
+    void poll() {
+        if (!responsive || inTransaction) return;
+        DeviceButton::servicePowerOff();
+    }
+};
+ButtonRadioHal radioHal;
+// Fixed-size trace: no allocation, printing or extra radio commands in RX/TX.
+class TracedRadio : public SX1262 {
+public:
+    explicit TracedRadio(Module *module) : SX1262(module), modPtr(module) {}
+    void beginTrace() { count = 0; dropped = 0; tracing = AppConfig::radioRxTrace; txEnd = 0; }
+    int16_t setFrequency(float value) override {
+        const int16_t rc = SX1262::setFrequency(value);
+        if (rc == RADIOLIB_ERR_NONE) frequency = value;
+        return rc;
+    }
+    int16_t setSpreadingFactor(uint8_t value) override {
+        const int16_t rc = SX1262::setSpreadingFactor(value);
+        if (rc == RADIOLIB_ERR_NONE) sf = value;
+        return rc;
+    }
+    int16_t setBandwidth(float value) override {
+        const int16_t rc = SX1262::setBandwidth(value);
+        if (rc == RADIOLIB_ERR_NONE) bandwidth = value;
+        return rc;
+    }
+    int16_t stageMode(RadioModeType_t mode, RadioModeConfig_t *config) override {
+        staged = mode;
+        const int16_t rc = SX1262::stageMode(mode, config);
+        if (mode == RADIOLIB_RADIO_MODE_RX && modPtr) {
+            const uint8_t stopPreamble = RADIOLIB_SX126X_STOP_ON_PREAMBLE_ON;
+            modPtr->SPIwriteStream(RADIOLIB_SX126X_CMD_STOP_TIMER_ON_PREAMBLE, &stopPreamble, 1);
+        }
+        record("stage", rc);
+        return rc;
+    }
+    int16_t launchMode() override {
+        const int16_t rc = SX1262::launchMode();
+        record("launch", rc);
+        return rc;
+    }
+    int16_t finishTransmit() override {
+        const int16_t rc = SX1262::finishTransmit();
+        txEnd = millis();
+        record("TX-end", rc);
+        return rc;
+    }
+    uint32_t getIrqFlags() override {
+        const uint32_t flags = SX1262::getIrqFlags();
+        record("IRQ", flags);
+        return flags;
+    }
+    int16_t readData(uint8_t *data, size_t length) override {
+        const int16_t rc = SX1262::readData(data, length);
+        record("read", rc);
+        return rc;
+    }
+    void dumpTrace() {
+        tracing = false;
+        for (size_t i = 0; i < count; ++i) {
+            const Entry &e = entries[i];
+            TrackerLog.printf("[RX TRACE] t=%lu sinceTXend=%ld %s mode=%u freq=%.3f SF%u BW=%.0f value=%ld\n",
+                static_cast<unsigned long>(e.at), static_cast<long>(e.sinceTx),
+                e.action, unsigned(e.mode), e.freq, e.sf, e.bw, static_cast<long>(e.value));
+        }
+        if (dropped) TrackerLog.printf("[RX TRACE] dropped=%u\n", dropped);
+    }
+private:
+    struct Entry {
+        const char *action;
+        uint32_t at;
+        int32_t sinceTx;
+        RadioModeType_t mode;
+        float freq, bw;
+        uint8_t sf;
+        int32_t value;
+    } entries[32];
+    bool tracing = false;
+    size_t count = 0;
+    unsigned dropped = 0;
+    uint32_t txEnd = 0;
+    RadioModeType_t staged{};
+    float frequency = 0, bandwidth = 0;
+    uint8_t sf = 0;
+    void record(const char *action, int32_t value) {
+        if (!tracing) return;
+        if (count == 32) { ++dropped; return; }
+        const uint32_t now = millis();
+        entries[count++] = {action, now, txEnd ? int32_t(now - txEnd) : -1,
+                            staged, frequency, bandwidth, sf, value};
+    }
+    Module *modPtr = nullptr;
+};
+TracedRadio radio(new Module(&radioHal, Board::radioCs, Board::radioDio1, Board::radioReset, Board::radioBusy));
 // Preserve the deployed channel-0-only configuration (923.2 MHz).
 LoRaWANBand_t loraBand = [] {
     LoRaWANBand_t band = AS923;
     band.txFreqs[1].freq = 0;
+    // Match the deployed ChirpStack no-dwell configuration. Without
+    // this, AS923 defaults clamp RX1 to DR2 (SF10) and reject DR0 uplinks/joins
+    // (ToA > 400 ms). Use only where regional/network regulations permit no dwell limit.
+    band.dwellTimeDn = 0;
+    band.dwellTimeUp = 0;
     return band;
 }();
 LoRaWANNode node(&radio, &loraBand);
 LoRaStorage storage;
 bool ready = false;
 bool radioReady = false;
+RTC_DATA_ATTR bool primaryTelemetryAcknowledged = false;
+RTC_DATA_ATTR bool deviceInfoAttempted = false;
 uint8_t deviceIdentity[32];
 
 int16_t initializeRadio()
@@ -49,10 +188,10 @@ void sleep_lora_radio()
     // the PHY only so sleep is sent reliably; do not join or change storage.
     if (!radioReady) {
         const int16_t state = initializeRadio();
-        Serial.printf("[LoRa] Radio init before sleep: %d\n", state);
+        TrackerLog.printf("[LoRa] Radio init before sleep: %d\n", state);
         if (state != RADIOLIB_ERR_NONE) {
             ready = false;
-            Serial.println("[LoRa] Radio sleep skipped: init failed; low sleep current is not assured");
+            TrackerLog.println("[LoRa] Radio sleep skipped: init failed; low sleep current is not assured");
             return;
         }
     }
@@ -60,9 +199,9 @@ void sleep_lora_radio()
     // Restore the original warm-sleep baseline for current measurements.
     // LoRaWAN session/counters in RTC are not affected.
     const int16_t state = radio.sleep();
-    Serial.printf("[LoRa] Radio warm sleep: %d\n", state);
+    TrackerLog.printf("[LoRa] Radio warm sleep: %d\n", state);
     if (state != RADIOLIB_ERR_NONE)
-        Serial.println("[LoRa] Radio sleep command failed; low sleep current is not assured");
+        TrackerLog.println("[LoRa] Radio sleep command failed; low sleep current is not assured");
 
     // Detach only LoRa's SPI2 bus. ADXL362 uses a separate SPI3 bus and must
     // keep running for fall wake. Keep NSS pulled HIGH so it cannot float LOW
@@ -72,7 +211,7 @@ void sleep_lora_radio()
     pinMode(Board::radioMosi, INPUT);
     pinMode(Board::radioMiso, INPUT);
     pinMode(Board::radioCs, INPUT_PULLUP);
-    Serial.println("[LoRa] SPI released: SCK/MOSI/MISO=INPUT, CS=INPUT_PULLUP");
+    TrackerLog.println("[LoRa] SPI released: SCK/MOSI/MISO=INPUT, CS=INPUT_PULLUP");
     ready = false;
     radioReady = false;
 }
@@ -85,8 +224,10 @@ uint32_t lora_wait_ms()
 void lora_forget_rtc_session()
 {
     ready = false;
+    primaryTelemetryAcknowledged = false;
+    deviceInfoAttempted = false;
     LoRaStorage::clearRtcSession();
-    Serial.println("[LoRa] User power cycle: RTC session cleared; OTAA join required");
+    TrackerLog.println("[LoRa] User power cycle: RTC session cleared; OTAA join required");
 }
 
 bool setup_lora_wan_app()
@@ -97,13 +238,13 @@ bool setup_lora_wan_app()
     buildIdentity();
 
     int16_t state = initializeRadio();
-    Serial.printf("[LoRa] Radio init: %d\n", state);
+    TrackerLog.printf("[LoRa] Radio init: %d\n", state);
     if (state != RADIOLIB_ERR_NONE)
         return false;
     state = node.beginOTAA(LoRaCredentials::joinEui, LoRaCredentials::devEui, nullptr, LoRaCredentials::appKey);
     if (state != RADIOLIB_ERR_NONE)
     {
-        Serial.printf("[LoRa] OTAA init failed: %d\n", state);
+        TrackerLog.printf("[LoRa] OTAA init failed: %d\n", state);
         return false;
     }
 
@@ -113,45 +254,64 @@ bool setup_lora_wan_app()
     LoRaStorage::Restore restore = storage.begin(node, deviceIdentity);
     if (restore == LoRaStorage::Restore::Error)
     {
-        Serial.println("[LoRa] Nonce storage invalid or identity changed; join disabled (no automatic reset)");
+        TrackerLog.println("[LoRa] Nonce storage invalid or identity changed; join disabled (no automatic reset)");
         return false;
     }
 
     if (restore == LoRaStorage::Restore::Session)
     {
+        radioHal.responsive = true;
+        DeviceButton::servicePowerOff();
         state = node.activateOTAA();
+        radioHal.responsive = false;
+        DeviceButton::servicePowerOff();
         if (state == RADIOLIB_LORAWAN_SESSION_RESTORED || state == RADIOLIB_ERR_NONE)
         {
-            Serial.printf("[LoRa] Session restored from RTC (FCntUp: %lu)\n",
+            TrackerLog.printf("[LoRa] Session restored from RTC (FCntUp: %lu)\n",
                           (unsigned long)LoRaStorage::nextCounter(node));
             ready = true;
         }
         else
         {
-            Serial.printf("[LoRa] Session restore activation failed: %d; will re-join\n", state);
+            TrackerLog.printf("[LoRa] Session restore activation failed: %d; will re-join\n", state);
             restore = LoRaStorage::Restore::JoinRequired;
         }
     }
 
     if (restore == LoRaStorage::Restore::Fresh || restore == LoRaStorage::Restore::JoinRequired)
     {
-        Serial.printf("[LoRa] Initiating OTAA Join (DevEUI: %016llX)...\n",
+        TrackerLog.printf("[LoRa] Initiating OTAA Join (DevEUI: %016llX)...\n",
                       (unsigned long long)LoRaCredentials::devEui);
         if (!storage.reserveJoin(node))
         {
-            Serial.println("[LoRa] Failed to reserve DevNonce; aborting join");
+            TrackerLog.println("[LoRa] Failed to reserve DevNonce; aborting join");
             return false;
         }
 
+        node.setDwellTime(false);
+        node.scanGuard = 200;
+        const int16_t drState = node.setDatarate(AppConfig::uplinkDataRate);
+        if (drState != RADIOLIB_ERR_NONE) {
+            TrackerLog.printf("[LoRa] Cannot set Join DR%u: %d\n", AppConfig::uplinkDataRate, drState);
+        } else {
+            TrackerLog.printf("[LoRa] Join PHY configured: DR%u\n", AppConfig::uplinkDataRate);
+        }
+
+        radio.beginTrace();
+        radioHal.responsive = true;
+        DeviceButton::servicePowerOff();
         state = node.activateOTAA();
+        radioHal.responsive = false;
+        radio.dumpTrace();
+        DeviceButton::servicePowerOff();
         if (state == RADIOLIB_LORAWAN_NEW_SESSION)
         {
-            Serial.println("[LoRa] OTAA Join successful (new session)");
+            TrackerLog.println("[LoRa] OTAA Join successful (new session)");
             ready = storage.saveJoined(node);
         }
         else
         {
-            Serial.printf("[LoRa] OTAA Join failed: %d\n", state);
+            TrackerLog.printf("[LoRa] OTAA Join failed: %d\n", state);
             return false;
         }
     }
@@ -166,61 +326,97 @@ bool setup_lora_wan_app()
     node.setDeviceStatus(batteryLevel);
 
     node.setADR(false);
-    // Allow the 15-byte SF10 uplink where local regulations permit no dwell limit.
+    // Allow slow-DR uplinks only where local regulations permit no dwell limit.
     node.setDwellTime(false);
+    node.scanGuard = 200;
     // RadioLib validates the requested DR against the session's dwell-time limits.
     state = node.setDatarate(AppConfig::uplinkDataRate);
     if (state != RADIOLIB_ERR_NONE) {
-        Serial.printf("[LoRa] Cannot set DR%u: %d; check AS923 dwell-time settings\n",
+        TrackerLog.printf("[LoRa] Cannot set DR%u: %d; check AS923 dwell-time settings\n",
                       AppConfig::uplinkDataRate, state);
         return false;
     }
 
+    TrackerLog.printf("[LoRa] PHY configured: DR%u; ADR=OFF; local uplink dwell limit=OFF; band downlink dwell default=OFF\n",
+                  AppConfig::uplinkDataRate);
     return ready;
 }
 
-LoRaResult send_lora_telemetry(const Telemetry &sample)
+static LoRaResult sendPayload(const uint8_t *payload, size_t length, uint8_t port)
 {
     LoRaResult result{};
     result.code = RADIOLIB_ERR_UNKNOWN;
     if (!ready) return result;
     // Same PHY settings in debug and production.
     result.code = node.setDatarate(AppConfig::uplinkDataRate);
-    if (result.code != RADIOLIB_ERR_NONE) return result;
+    if (result.code != RADIOLIB_ERR_NONE) {
+        TrackerLog.printf("[LoRa] Cannot set TX DR%u: %d; transmission skipped\n",
+                      AppConfig::uplinkDataRate, result.code);
+        return result;
+    }
 
-    uint8_t payload[TELEMETRY_PAYLOAD_SIZE];
-    encode_telemetry(sample, payload);
     if (!storage.reserveUplink(node)) {
-        Serial.println("[LoRa] Could not reserve frame counter; transmission skipped");
+        TrackerLog.println("[LoRa] Could not reserve frame counter; transmission skipped");
         result.code = RADIOLIB_ERR_UNKNOWN;
         ready = false;
         return result;
     }
 
     const bool confirmed = true; // Every uplink requests network QoS feedback.
-    Serial.printf("[LoRa] TX port=%u bytes=%u FCnt=%lu status=%u confirmed=%s\n",
-                  AppConfig::uplinkPort, unsigned(sizeof(payload)),
-                  (unsigned long)LoRaStorage::nextCounter(node), sample.status,
-                  confirmed ? "yes" : "no");
+    TrackerLog.printf("[LoRa] TX port=%u bytes=%u FCnt=%lu confirmed=%s DR=%u\n",
+                  port, unsigned(length),
+                  (unsigned long)LoRaStorage::nextCounter(node),
+                  confirmed ? "yes" : "no", AppConfig::uplinkDataRate);
 
     LoRaWANEvent_t event{};
     result.downlinkLength = sizeof(result.downlink);
-    result.code = node.sendReceive(payload, sizeof(payload), AppConfig::uplinkPort,
+    radioHal.responsive = true;
+    DeviceButton::servicePowerOff();
+    radio.beginTrace();
+    result.code = node.sendReceive(payload, length, port,
                                    result.downlink, &result.downlinkLength, confirmed,
                                    nullptr, &event);
+    radioHal.responsive = false;
+    radio.dumpTrace();
+    DeviceButton::servicePowerOff();
     result.acknowledged = confirmed && result.code > 0 && event.confirming;
     result.downlinkPort = event.fPort;
     if (result.code <= 0) result.downlinkLength = 0;
     result.sessionSaved = storage.saveUplink(node);
     if (!result.sessionSaved) {
-        Serial.println("[LoRa] Session save failed");
+        TrackerLog.println("[LoRa] Session save failed");
         ready = false;
     }
-    Serial.printf("[LoRa] sendReceive=%d (0=no downlink, 1/2=RX window, negative=error)\n",
+    TrackerLog.printf("[LoRa] sendReceive=%d (0=no downlink, 1/2=RX window, negative=error)\n",
                   result.code);
     if (confirmed)
-        Serial.printf("[LoRa] Uplink ACK: %s\n",
+        TrackerLog.printf("[LoRa] Uplink ACK: %s\n",
                       result.acknowledged ? "received" : "missing; retry required");
     return result;
+}
+
+LoRaResult send_lora_telemetry(const Telemetry &sample)
+{
+    uint8_t payload[TELEMETRY_PAYLOAD_SIZE];
+    encode_telemetry(sample, payload);
+    const LoRaResult result = sendPayload(payload, sizeof(payload), AppConfig::uplinkPort);
+    if (result.acknowledged && (sample.status == 0 || sample.status == 4))
+        primaryTelemetryAcknowledged = true;
+    return result;
+}
+
+bool lora_device_info_due()
+{
+    return ready && primaryTelemetryAcknowledged && !deviceInfoAttempted;
+}
+
+LoRaResult send_lora_device_info(const Telemetry &sample)
+{
+    // Best-effort, once per user power-on. Never let metadata retries starve
+    // tracking or emergency traffic; durable MAC counters still apply.
+    deviceInfoAttempted = true;
+    uint8_t payload[DEVICE_INFO_PAYLOAD_SIZE];
+    encode_device_info(sample, payload);
+    return sendPayload(payload, sizeof(payload), AppConfig::deviceInfoPort);
 }
 

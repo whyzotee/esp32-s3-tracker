@@ -78,7 +78,7 @@ int main() {
 }
 `);
     const binary = path.join(dir, 'test');
-    cp.execFileSync('c++', ['-std=c++17', path.join(dir, 'test.cpp'), '-o', binary]);
+    cp.execFileSync('c++', ['-std=c++17', '-DTRACKER_LOG_HOST_TEST', '-DTrackerLog=Serial' , '-DTRACKER_WEB_DEBUG=0', path.join(dir, 'test.cpp'), '-o', binary]);
     cp.execFileSync(binary);
     console.log('Radio warm-sleep, pre-init shutdown and failure-path tests passed');
 } finally {

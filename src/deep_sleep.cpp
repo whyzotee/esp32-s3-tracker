@@ -1,6 +1,8 @@
+#include <tracker_log.h>
 #include <Arduino.h>
 #include <audio_feedback.h>
 #include <deep_sleep.h>
+#include <debug_web.h>
 #include <tracker_app.h>
 #include <board_pins.h>
 #include <device_button.h>
@@ -23,13 +25,14 @@ void armButton()
     esp_sleep_enable_ext0_wakeup(Board::button, 0);
 }
 
-[[noreturn]] void enter()
+[[noreturn]] void enter(bool powerOff)
 {
+    DebugWeb::stop();
     sleep_lora_radio();
     stop_gnss();
-    AudioFeedback::playAndWait(AudioFeedback::Event::DeepSleep);
+    if (!powerOff) AudioFeedback::playAndWait(AudioFeedback::Event::DeepSleep);
     Board::prepareSleep();
-    Serial.flush();
+    TrackerLog.flush();
     TrackerApp::endWatchdog();
     esp_deep_sleep_start();
     while (true) delay(1000);
@@ -40,12 +43,12 @@ namespace DeepSleep {
 void logWakeReason()
 {
     switch (esp_sleep_get_wakeup_cause()) {
-    case ESP_SLEEP_WAKEUP_EXT0: Serial.println("[WAKE] Button"); break;
-    case ESP_SLEEP_WAKEUP_EXT1: Serial.println("[WAKE] Fall sensor"); break;
-    case ESP_SLEEP_WAKEUP_TIMER: Serial.println("[WAKE] Timer"); break;
-    default: Serial.println("[WAKE] Power-on or reset"); break;
+    case ESP_SLEEP_WAKEUP_EXT0: TrackerLog.println("[WAKE] Button"); break;
+    case ESP_SLEEP_WAKEUP_EXT1: TrackerLog.println("[WAKE] Fall sensor"); break;
+    case ESP_SLEEP_WAKEUP_TIMER: TrackerLog.println("[WAKE] Timer"); break;
+    default: TrackerLog.println("[WAKE] Power-on or reset"); break;
     }
-    Serial.printf("[WAKE] Low Power: %s; configured report sleep: %lu ms\n",
+    TrackerLog.printf("[WAKE] Low Power: %s; configured report sleep: %lu ms\n",
                   PowerMode::enabled() ? "ON" : "OFF",
                   static_cast<unsigned long>(PowerMode::reportInterval()));
 }
@@ -63,16 +66,16 @@ void logWakeReason()
     durationMs = max(durationMs, minimumMs);
     armButton();
     esp_sleep_enable_timer_wakeup(uint64_t(durationMs) * 1000);
-    Serial.printf("[SLEEP] Timer: %lu ms; button/fall wake enabled when available\n",
+    TrackerLog.printf("[SLEEP] Timer: %lu ms; button/fall wake enabled when available\n",
                   (unsigned long)durationMs);
-    enter();
+    enter(false);
 }
 
 [[noreturn]] void powerOff()
 {
     esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
     armButton();
-    Serial.println("[POWER] Off: waiting for a 1-4 second button hold to turn on");
-    enter();
+    TrackerLog.println("[POWER] Off: waiting for a 1-4 second button hold to turn on");
+    enter(true);
 }
 }

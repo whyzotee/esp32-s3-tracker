@@ -1,3 +1,4 @@
+#include <tracker_log.h>
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WebServer.h>
@@ -13,6 +14,7 @@
 #include <lorawan.example.h>
 #endif
 #include <ota_manager.h>
+#include <debug_web.h>
 #include <tracker_app.h>
 
 namespace {
@@ -51,25 +53,25 @@ void handleUploadBody()
     switch (upload.status) {
     case UPLOAD_FILE_START:
         updateOk = Update.begin(UPDATE_SIZE_UNKNOWN, U_FLASH);
-        if (!updateOk) Update.printError(Serial);
-        Serial.printf("[OTA] Upload started: %s\n", upload.filename.c_str());
+        if (!updateOk) Update.printError(TrackerLog);
+        TrackerLog.printf("[OTA] Upload started: %s\n", upload.filename.c_str());
         break;
     case UPLOAD_FILE_WRITE:
         if (updateOk && Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
             updateOk = false;
-            Update.printError(Serial);
+            Update.printError(TrackerLog);
         }
         break;
     case UPLOAD_FILE_END:
         if (updateOk) updateOk = Update.end(true);
-        if (!updateOk) Update.printError(Serial);
-        Serial.printf("[OTA] Upload %s: %u bytes\n", updateOk ? "complete" : "failed",
+        if (!updateOk) Update.printError(TrackerLog);
+        TrackerLog.printf("[OTA] Upload %s: %u bytes\n", updateOk ? "complete" : "failed",
                       static_cast<unsigned>(upload.totalSize));
         break;
     case UPLOAD_FILE_ABORTED:
         updateOk = false;
         Update.abort();
-        Serial.println("[OTA] Upload aborted");
+        TrackerLog.println("[OTA] Upload aborted");
         break;
     default:
         break;
@@ -89,17 +91,16 @@ void handleUploadDone()
 
 bool startAp()
 {
-    const uint64_t mac = ESP.getEfuseMac();
     char name[32];
     snprintf(name, sizeof(name), "Tracker-OTA-%06llX",
-             static_cast<unsigned long long>(mac & 0xFFFFFFULL));
+             static_cast<unsigned long long>(LoRaCredentials::devEui >> 40));
     apName = name;
 
     if (!WiFi.mode(WIFI_AP)) return false;
     const IPAddress apIp(192, 168, 4, 1);
     const IPAddress subnet(255, 255, 255, 0);
     if (!WiFi.softAPConfig(apIp, apIp, subnet)) {
-        Serial.println("[OTA] Failed to configure fixed AP IP");
+        TrackerLog.println("[OTA] Failed to configure fixed AP IP");
         return false;
     }
     if (!WiFi.softAP(apName.c_str(), OtaManager::apPassword)) return false;
@@ -113,7 +114,7 @@ bool startAp()
     });
     server.begin();
     touch();
-    Serial.printf("[OTA] AP ready: %s at http://%s/ (password protected)\n", apName.c_str(),
+    TrackerLog.printf("[OTA] AP ready: %s at http://%s/ (password protected)\n", apName.c_str(),
                   WiFi.softAPIP().toString().c_str());
     return true;
 }
@@ -130,28 +131,31 @@ void stopAp()
 namespace OtaManager {
 [[noreturn]] void run(uint32_t sleepIntervalMs)
 {
+    DebugWeb::stop(); // Release port 80 and Wi-Fi before the OTA AP takes over.
     TrackerApp::endWatchdog(); // OTA has its own inactivity timeout.
     DeviceButton::acknowledgeOta();
     sleep_lora_radio();
     stop_gnss();
     Board::setVext(false);
-    Serial.println("[OTA] Starting local Wi-Fi updater");
-    AudioFeedback::play(AudioFeedback::Event::OtaMode);
+    TrackerLog.println("[OTA] Starting local Wi-Fi updater");
+    AudioFeedback::playAndWait(AudioFeedback::Event::OtaMode);
     if (!startAp()) {
-        Serial.println("[OTA] AP start failed; returning to sleep");
+        TrackerLog.println("[OTA] AP start failed; returning to sleep");
         DeepSleep::timed(sleepIntervalMs);
     }
 
     for (;;) {
+        // Radio/GPS are already stopped; still honor the global hold-to-off.
+        DeviceButton::servicePowerOff();
         server.handleClient();
         digitalWrite(Board::statusLed, (millis() / 500U) % 2U == 0U ? HIGH : LOW);
         if (rebootAt != 0 && uint32_t(millis() - rebootAt) >= rebootDelayMs) {
-            Serial.println("[OTA] Rebooting into uploaded firmware");
-            Serial.flush();
+            TrackerLog.println("[OTA] Rebooting into uploaded firmware");
+            TrackerLog.flush();
             ESP.restart();
         }
         if (uint32_t(millis() - lastActivityAt) >= idleTimeoutMs) {
-            Serial.println("[OTA] Idle timeout; returning to timed sleep");
+            TrackerLog.println("[OTA] Idle timeout; returning to timed sleep");
             stopAp();
             DeepSleep::timed(sleepIntervalMs);
         }
