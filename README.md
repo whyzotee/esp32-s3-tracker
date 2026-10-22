@@ -175,12 +175,15 @@ writes and are lost when battery power is removed.
   ACK. A nonnegative send result plays the same success melody as an ACK, but
   means local send completion only, not network reception. No downlink (`0`)
   is successful for this report; it resumes the normal report/sleep interval.
-  Radio errors produce the error melody and use the retry interval.
+  Radio errors produce the error melody and retry at the next legal radio slot.
 - Statuses 1–4 and FPort 3 device information still request a LoRaWAN ACK.
   Once LoRa/GPS are ready, a primary-report ACK produces the success melody and
   a missing ACK produces the error melody, unless an emergency/off-route alarm
-  is active. A missing primary-report ACK schedules a retry after
-  `AppConfig::retryInitialMs` (60 seconds), or a longer radio-required wait.
+  is active. Failed primary reports or missing primary-report ACKs retry after
+  the MAC's remaining airtime wait, with a 1-second anti-spin minimum
+  (`AppConfig::txRetryFloorMs`), not the normal report interval or a fixed 60 seconds.
+  Initialization/join failures and failed MAC-state saves use the 30-second
+  `AppConfig::retryInitialMs` backoff (or a longer radio-required wait).
   Retries are not sent in a tight loop.
 - ACK confirms LoRaWAN network reception through a gateway;
   **it does not confirm that the application created an alert**.
@@ -411,8 +414,8 @@ A background task debounces the button during GPS acquisition and radio blocking
 calls. Power-off is applied at the next safe service point, not midway through RF.
 SOS/Fall stay pending across deep sleep until a valid LoRaWAN ACK is received.
 An unrelated downlink or a nonnegative send result alone does not clear these events.
-Without an ACK, the device waits awake with the working tone for the retry interval (60 seconds),
-or longer if required by LoRaWAN airtime limits, before another send cycle; no
+Without an ACK, the device waits awake for the remaining LoRaWAN airtime limit
+(at least `AppConfig::txRetryFloorMs`, normally 1 second) before another send cycle; no
 application-level immediate retry loop is added. RadioLib handles any network-configured
 NbTrans repetitions within its bounded send call. Normal position reports are
 unconfirmed; their success sound confirms local completion, not network receipt.

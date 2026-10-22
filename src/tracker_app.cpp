@@ -244,10 +244,19 @@ void runCycle()
         if (sample.status == 3) TripControl::acknowledgeWellbeing(sentRevision);
     }
 
-    const uint32_t interval = !result.delivered(sample.status) || !result.sessionSaved
-        ? AppConfig::retryInitialMs : reportInterval();
-    const uint32_t minimumSleep = max(lora_wait_ms(),
-        result.delivered(sample.status) ? uint32_t(0) : AppConfig::retryInitialMs);
+    const bool retry = !result.delivered(sample.status) || !result.sessionSaved;
+    // A saved MAC state permits retry at the next legal radio slot. Reserve the
+    // longer backoff for init/storage failures rather than a missing uplink ACK.
+    const uint32_t interval = retry
+        ? (result.sessionSaved ? AppConfig::txRetryFloorMs : AppConfig::retryInitialMs)
+        : reportInterval();
+    const uint32_t radioWait = lora_wait_ms();
+    const uint32_t minimumSleep = retry ? max(radioWait, interval) : radioWait;
+    if (retry)
+        TrackerLog.printf("[RETRY] Next attempt in %lu ms; radio_wait=%lu ms MAC_saved=%s\n",
+                          static_cast<unsigned long>(minimumSleep),
+                          static_cast<unsigned long>(radioWait),
+                          result.sessionSaved ? "yes" : "no");
     sleepFor(max(interval, minimumSleep), minimumSleep);
 }
 }

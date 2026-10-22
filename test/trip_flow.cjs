@@ -160,7 +160,7 @@ int main() {
     reset(); goodFix=false; command(1); cycle();
     assert(sent.status==4 && TripControl::phase()==TripControl::Phase::Preparing);
     reset(); fall=true; TripControl::raiseAlarm(); response.code=0; response.acknowledged=false;
-    cycle(); assert(sent.status==2 && fall && slept>=AppConfig::retryInitialMs);
+    cycle(); assert(sent.status==2 && fall && slept==AppConfig::txRetryFloorMs);
     response.code=1; response.acknowledged=true; cycle();
     assert(!fall && TripControl::alarmActive());
     reset(); sos=fall=true; TripControl::raiseAlarm(); cycle();
@@ -214,7 +214,22 @@ int main() {
     assert(!TripControl::keepAwake()); // No artificial retry or awake wait for a missing ACK.
     response.code=-4; deepSleeps=0; cycle();
     assert(AudioFeedback::errorSounds==errorsBefore+1);
-    assert(deepSleeps==0 && slept>=AppConfig::retryInitialMs && TripControl::keepAwake());
+    assert(deepSleeps==0 && slept==AppConfig::txRetryFloorMs && TripControl::keepAwake());
+    // Read airtime wait after transmission, not the pre-send guard.
+    radioWait=0; afterSend=[] { radioWait=208000; };
+    cycle(); assert(slept==208000 && TripControl::keepAwake());
+    radioWait=0; afterSend=[] { radioWait=12000; };
+    cycle(); assert(slept==12000); // Neither reportInterval nor 60s delays the retry.
+    radioWait=0; afterSend={}; response.sessionSaved=false;
+    cycle(); assert(slept==AppConfig::retryInitialMs); // Storage errors keep their backoff.
+    reset(); sos=true; TripControl::raiseAlarm();
+    response.code=0; response.acknowledged=false;
+    afterSend=[] { radioWait=12000; };
+    cycle(); assert(sos && TripControl::alarmActive() && slept==12000);
+    reset(); TripControl::raiseAlarm(); assert(TripControl::cancelAlarm());
+    response.code=0; response.acknowledged=false;
+    cycle(); assert(sent.status==3 && TripControl::wellbeingPending());
+    assert(slept==AppConfig::txRetryFloorMs);
 }
 `);
     const binary = path.join(dir, 'test');

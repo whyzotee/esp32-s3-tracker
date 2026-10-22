@@ -3,9 +3,11 @@
 
 // Shared tracker settings. Keep this header independent of peripheral drivers.
 namespace AppConfig {
-constexpr uint32_t reportIntervalMs = 1 * 30 * 1000; // 30 วิ
-constexpr uint32_t lowPowerIntervalMs = 15 * 60 * 1000;
-constexpr uint32_t retryInitialMs = 60 * 1000;
+constexpr uint32_t reportIntervalMs = 1 * 30 * 1000; // 30 sec
+constexpr uint32_t lowPowerIntervalMs = 15 * 60 * 1000; // 15 min
+constexpr uint32_t retryInitialMs = 30 * 1000;
+// Prevent a tight failure loop when the MAC reports no remaining airtime wait.
+constexpr uint32_t txRetryFloorMs = 1000;
 constexpr uint32_t firstGpsTimeoutMs = 120 * 1000;
 constexpr uint32_t gpsTimeoutMs = 30 * 1000;
 // Stop feeding the hardware Task WDT after this tracking budget; its original

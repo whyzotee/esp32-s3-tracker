@@ -5,7 +5,7 @@
 // Set to 1 here, or pass -DTRACKER_WEB_DEBUG=1 in PlatformIO build_flags.
 // Disabled builds contain no debug HTTP server and never start its Wi-Fi AP.
 #ifndef TRACKER_WEB_DEBUG
-#define TRACKER_WEB_DEBUG 1
+#define TRACKER_WEB_DEBUG 0
 #endif
 
 namespace DebugWeb {
