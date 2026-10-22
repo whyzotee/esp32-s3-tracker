@@ -130,6 +130,13 @@ int main(int argc,char**) {
         const auto count=noteCount(); delay(500);assert(noteCount()==count);
         // Synchronous requests also use the worker, not the calling thread.
         AudioFeedback::playAndWait(Event::LoRaConnected);quiet();
+    } else if(argc>5) {
+        AudioFeedback::startLoop(Event::SosAcknowledged);
+        await([]{return noteCount()>=8;}); // At least two complete four-note phrases.
+        AudioFeedback::silence(); quiet();
+        { std::lock_guard<std::mutex> l(hardwareLock);
+          for(int i=0;i<8;++i) assert(notes[i]==(i%4==3 ? 2640 : 2900)); }
+        const auto count=noteCount(); delay(500); assert(noteCount()==count);
     } else if(argc>4) {
         AudioFeedback::startLoop(Event::Sos);
         await([]{return noteCount()>0;});
@@ -170,7 +177,7 @@ int main(int argc,char**) {
     const binary = path.join(dir, 'test');
     cp.execFileSync('c++', ['-std=c++17', '-DTRACKER_LOG_HOST_TEST', '-DTrackerLog=Serial' , '-DTRACKER_WEB_DEBUG=0', '-pthread', '-I'+dir, '-I'+path.join(root,'include'),
         path.join(root,'src/audio_feedback.cpp'), path.join(dir,'test.cpp'), '-o',binary]);
-    for (const args of [[],['working'],['sos','ack'],['fall','ack','held'],['timed','sleep','gpio','hold']])
+    for (const args of [[],['working'],['sos','ack'],['fall','ack','held'],['timed','sleep','gpio','hold'],['application','ack','repeats','fourth','note']])
         cp.execFileSync(binary,args,{timeout:10000});
     console.log('Audio worker ownership, stale dequeue cancellation and terminal shutdown tests passed');
 } finally {

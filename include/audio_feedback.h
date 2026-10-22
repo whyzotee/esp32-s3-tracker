@@ -13,6 +13,7 @@ enum class Event : unsigned char {
     Error,
     OtaMode,
     DeepSleep,
+    SosAcknowledged,
 };
 
 // Start the buzzer worker after Board::begin() has configured GPIO4.

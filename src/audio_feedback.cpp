@@ -28,6 +28,9 @@ constexpr Note powerOff[] = {
 constexpr Note sos[] = {
     {2900, 130, 90}, {2900, 130, 90}, {2900, 130, 1500},
 };
+constexpr Note sosAcknowledged[] = {
+    {2900, 130, 90}, {2900, 130, 90}, {2900, 130, 90}, {2640, 150, 1500},
+};
 constexpr Note fall[] = {
     {3300, 160, 70}, {3300, 160, 70}, {3300, 160, 70}, {3300, 320, 1500},
 };
@@ -57,6 +60,8 @@ Melody melodyFor(AudioFeedback::Event event)
         return {powerOff, uint8_t(sizeof(powerOff) / sizeof(powerOff[0])), "power off"};
     case AudioFeedback::Event::Sos:
         return {sos, uint8_t(sizeof(sos) / sizeof(sos[0])), "SOS"};
+    case AudioFeedback::Event::SosAcknowledged:
+        return {sosAcknowledged, uint8_t(sizeof(sosAcknowledged) / sizeof(sosAcknowledged[0])), "SOS/Fall application acknowledged"};
     case AudioFeedback::Event::Fall:
         return {fall, uint8_t(sizeof(fall) / sizeof(fall[0])), "fall"};
     case AudioFeedback::Event::LoRaJoining:

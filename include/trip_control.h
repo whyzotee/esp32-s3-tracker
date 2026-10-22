@@ -10,7 +10,7 @@ struct Feedback {
     bool alarm, outside;
     Preparation preparation;
     bool notifyPreparation;
-    uint8_t receipts;
+    bool applicationAcknowledged;
     bool notifyCancellation;
 };
 void reset();

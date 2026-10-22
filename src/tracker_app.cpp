@@ -110,6 +110,12 @@ void handleDownlink(const LoRaResult &result)
         return;
     }
     if (TripControl::handleDownlink(result.downlinkPort, result.downlink, result.downlinkLength)) {
+        if (result.downlink[0] == 7) {
+            DeviceButton::acknowledgeSos();
+            acknowledge_fall_detection();
+            AudioPolicy::refresh();
+            TrackerLog.println("[TRIP] SOS/Fall resolved by application; pending emergency reports cleared");
+        }
         TrackerLog.printf("[TRIP] Command=%u phase=%u initial_fix=%s off_route=%s\n",
                       result.downlink[0], unsigned(TripControl::phase()),
                       TripControl::initialFixReady() ? "yes" : "no",

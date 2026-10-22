@@ -17,7 +17,7 @@ using portMUX_TYPE = int;
     fs.writeFileSync(path.join(dir, 'audio_feedback.h'), `
 #pragma once
 namespace AudioFeedback {
-enum class Event { Sos, Fall, LoRaJoining, LoRaConnected, Error };
+enum class Event { Sos, SosAcknowledged, Fall, LoRaJoining, LoRaConnected, Error };
 inline int last = -1;
 inline int receipts = 0;
 inline int errors = 0;
@@ -42,7 +42,7 @@ int main() {
     assert(!handleDownlink(11,nullptr,1));
     assert(!handleDownlink(11,malformed,0));
     assert(!handleDownlink(11,malformed,2));
-    assert(!command(0) && !command(7));
+    assert(!command(0) && !command(8));
     assert(command(5) && command(6) && AudioFeedback::receipts==0);
     assert(!command(3)); // Off-route is meaningful only during a trip.
     assert(command(1) && command(1)); // Start can queue before initial GPS fix.
@@ -60,27 +60,33 @@ int main() {
     AudioPolicy::refresh(); assert(AudioFeedback::last==int(AudioFeedback::Event::Sos));
     setAcknowledged(true); assert(alarmActive()); // Network ACK never cancels sound.
     assert(command(5) && command(6)); AudioPolicy::refresh();
-    assert(AudioFeedback::receipts==2);
+    assert(AudioFeedback::receipts==0);
     assert(alarmActive() && revision()==oldAlarm && !wellbeingPending());
-    AudioPolicy::refresh(); assert(AudioFeedback::last==int(AudioFeedback::Event::Sos));
+    AudioPolicy::refresh(); assert(AudioFeedback::last==int(AudioFeedback::Event::SosAcknowledged));
+    for(int i=0;i<10;++i) {
+        AudioPolicy::refresh(); assert(AudioFeedback::last==int(AudioFeedback::Event::SosAcknowledged));
+    }
+    assert(command(5)); AudioPolicy::refresh(); // Duplicate ACK retains the same loop.
+    assert(AudioFeedback::last==int(AudioFeedback::Event::SosAcknowledged));
     assert(cancelAlarm() && !alarmActive() && wellbeingPending());
-    assert(command(5) && command(6) && AudioFeedback::receipts==2);
+    assert(command(5) && command(6) && AudioFeedback::receipts==0);
     assert(takeCancellation() && !takeCancellation());
-    AudioPolicy::refresh(); assert(AudioFeedback::receipts==3);
-    AudioPolicy::refresh(); assert(AudioFeedback::receipts==3); // Once per cancellation.
+    AudioPolicy::refresh(); assert(AudioFeedback::receipts==1);
+    AudioPolicy::refresh(); assert(AudioFeedback::receipts==1); // Once per cancellation.
     assert(!cancelAlarm()); // Another plain click does not create another OK report.
     acknowledgeWellbeing(oldAlarm); assert(wellbeingPending());
     acknowledgeWellbeing(revision()); assert(!wellbeingPending());
     AudioPolicy::refresh(); assert(AudioFeedback::last==int(AudioFeedback::Event::Fall));
     assert(command(4) && !offRoute() && !keepAwake());
     raiseAlarm(); assert(cancelAlarm()); const auto oldOk=revision();
+    AudioPolicy::refresh();
     raiseAlarm(); assert(!wellbeingPending()); assert(cancelAlarm());
     acknowledgeWellbeing(oldOk); assert(wellbeingPending()); // Old ACK cannot clear a newer cancellation.
     acknowledgeWellbeing(revision()); assert(!wellbeingPending());
     assert(command(2) && endRequested());
     reset(); assert(!endRequested() && !alarmActive() && !wellbeingPending());
     markInitialFix(); assert(phase()==Phase::Waiting && keepAwake());
-    setAcknowledged(true); assert(keepAwake()); // Await application Start, even after successful ACK.
+    setAcknowledged(true); assert(!keepAwake()); // Await Start with timed Class A polling.
     assert(command(1) && phase()==Phase::Travelling && !keepAwake());
     reset(); markLoRaConnected(); markInitialFix();
     const int confirmations=AudioFeedback::receipts;
@@ -127,6 +133,27 @@ int main() {
     assert(AudioFeedback::receipts==beforeNetwork+2 && AudioFeedback::errors==beforeErrors+1);
     assert(command(4)); AudioPolicy::transmissionResult(true);
     assert(AudioFeedback::receipts==beforeNetwork+3);
+    reset(); raiseAlarm(); assert(command(6)); AudioPolicy::refresh();
+    assert(AudioFeedback::last==int(AudioFeedback::Event::SosAcknowledged));
+    raiseAlarm(); AudioPolicy::refresh(); // A new emergency needs its own application ACK.
+    assert(AudioFeedback::last==int(AudioFeedback::Event::Sos));
+    assert(!takeFeedback().applicationAcknowledged);
+    reset(); markLoRaConnected(); markInitialFix(); AudioPolicy::refresh();
+    for (uint8_t ack=5; ack<=6; ++ack) {
+        raiseAlarm(); assert(command(ack)); AudioPolicy::refresh();
+        const auto before=revision();
+        assert(command(7) && !alarmActive() && revision()!=before);
+        AudioPolicy::refresh(); assert(AudioFeedback::last==-1);
+        assert(!wellbeingPending() && !takeCancellation());
+        assert(!takeFeedback().applicationAcknowledged);
+        const auto resolved=revision();
+        assert(command(7) && revision()==resolved); // Duplicate resolution is harmless.
+        assert(command(ack)); AudioPolicy::refresh(); assert(AudioFeedback::last==-1);
+    }
+    assert(command(1) && command(3)); raiseAlarm(); assert(command(7));
+    AudioPolicy::refresh();
+    assert(offRoute() && phase()==Phase::Travelling);
+    assert(AudioFeedback::last==int(AudioFeedback::Event::Fall)); // Route alarm is independent.
 }
 `);
     const root = path.resolve(__dirname, '..');

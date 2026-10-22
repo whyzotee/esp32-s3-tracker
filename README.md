@@ -71,8 +71,9 @@ not a hexadecimal string.
 | End Trip | 11 | `02` | `Ag==` | Clear trip state, audio and pending events; enter soft-off until button power-on |
 | Off Route | 11 | `03` | `Aw==` | Repeat the off-route alarm during a trip; route detection is not performed on the device |
 | Route Clear | 11 | `04` | `BA==` | Stop the off-route alarm without cancelling SOS/Fall |
-| Acknowledge SOS | 11 | `05` | `BQ==` | Append one success melody to the current alarm phrase, then continue the alarm loop |
+| Acknowledge SOS | 11 | `05` | `BQ==` | Add a fourth confirmation beep to every repeating alarm phrase; the alarm continues |
 | Acknowledge Fall | 11 | `06` | `Bg==` | Same audible receipt confirmation as Acknowledge SOS; the alarm continues |
+| Resolve SOS/Fall | 11 | `07` | `Bw==` | Stop the shared SOS/Fall alarm and clear pending SOS/Fall reports; keep the trip running, without sending I-am-OK |
 | Low Power ON | 10 | `01 00 0F` | `AQAP` | Use `AppConfig::lowPowerIntervalMs` during a trip |
 | Low Power OFF | 10 | `00 00 00` | `AAAA` | Return to `AppConfig::reportIntervalMs` |
 
@@ -84,9 +85,16 @@ Cancelling SOS with the button does not clear the off-route alarm.
 
 Application acknowledgements (`05` / `06`) are distinct from LoRaWAN ACKs.
 Both use the shared SOS/Fall alarm: they do not cancel it, clear pending events,
-or report `I am OK`. A short button press is still required to cancel the alarm.
-Receipts received after cancellation are silent. Each received acknowledgement
-queues one success melody; the application should avoid sending duplicates.
+or report `I am OK`. Cancel with a short button press, or resolve remotely with `07`.
+The first application receipt latches an acknowledged alarm pattern: three SOS/Fall
+beeps followed by one distinct fourth confirmation beep, repeated every phrase
+until button cancellation or remote resolution. Duplicate receipts do not add extra notes. Receipts
+received after cancellation are silent; a new emergency clears the latched receipt.
+
+Resolution (`07`) applies to both SOS and Fall, with or without a prior application
+acknowledgement. It is idempotent and does not end the trip or clear an independent
+off-route alarm. Unlike a button cancellation, it does not declare the wearer safe
+or generate an I-am-OK report. Class A delivers it in a receive window after an uplink.
 
 MQTT topic:
 
@@ -175,11 +183,13 @@ writes and are lost when battery power is removed.
 - SOS and Fall share one melody; off-route uses another alarm pattern.
   Audio priority is SOS/Fall > off-route > active preparation.
   Success melodies do not interrupt an emergency alarm awaiting cancellation.
-- Preparation, awaiting Start, missing ACK and active alarms **keep the MCU awake**.
-  Awaiting Start has no working loop; readiness and per-transmission ACK/error confirmations are one-shot rather than
-  repeating loops. These states consume more power than deep sleep; the 90 µA sleep
-  measurement does not apply. Normal active-trip operation returns to deep sleep
-  after an ACK when no alarm is active.
+- Preparation, missing ACK and active alarms **keep the MCU awake**.
+  Once ready and acknowledged, awaiting Start uses timed deep sleep between
+  reports, just like normal active-trip operation without an alarm. Class A
+  receives queued Start commands only in the receive windows after an uplink;
+  keeping the MCU awake does not add receive windows. Readiness and per-transmission
+  ACK/error confirmations are one-shot rather than repeating loops. Awake waits
+  consume more power than deep sleep; the 90 µA sleep measurement does not apply.
 - Awake waits continue servicing buttons and the sensor instead of blocking all
   processing with a long delay. The startup Serial/USB five-second wait has been
   removed, so native USB monitoring may miss the earliest logs.
@@ -276,12 +286,13 @@ the buzzer is silenced before deep sleep.
 | Power on after a 1–4 second hold | Three rising notes |
 | Power off after a 3-second hold | Three falling notes, then sleeps after button release |
 | SOS or confirmed suspected fall | Same three high beeps with a pause, repeated until one short cancel press |
+| Application ACK during SOS/Fall | Three alarm beeps plus a fourth confirmation beep on every repeating phrase until button cancellation or remote resolution; network ACK alone does not enable it |
 | Off-route command during trip | Four high beeps with a pause, repeated until Route Clear |
 | Initial Join / GPS acquisition still in progress | Two low beeps, pause, repeats |
 | Initial LoRa connection and GPS fix both ready | ACK confirmation melody once, then quiet while awaiting Start |
 | Initial LoRa connection or GPS acquisition fails | Error melody once, then quiet; no repeating error loop |
 | Automatic retry after preparation failure | Resume the same Join/GPS working melody; success or failure is reported once for the new attempt |
-| Awaiting application Start | Quiet; preparation telemetry ACKs do not repeat the success melody |
+| Awaiting application Start | Each telemetry ACK plays success, then the timed deep-sleep beep; Web Debug simulates sleep without the sleep beep |
 | LoRaWAN uplink ACK during a trip, with no active alarm | Three rising confirmation notes |
 | No uplink ACK during a trip, with no active alarm | Error melody once for that transmission |
 | Local Wi-Fi OTA/AP mode starts | Alternating low/high notes, then one high confirmation note |

@@ -37,7 +37,7 @@ using portMUX_TYPE=int;
     fs.writeFileSync(path.join(dir, 'audio_feedback.h'), `
 #pragma once
 namespace AudioFeedback {
-enum class Event { Sos, Fall, LoRaJoining, LoRaConnected, Error };
+enum class Event { Sos, SosAcknowledged, Fall, LoRaJoining, LoRaConnected, Error };
 inline void startLoop(Event) {}
 inline void stopLoop(Event) {}
 inline void playAndWait(Event) {}
@@ -144,6 +144,7 @@ int main() {
     assert(sent.status==4 && acquisitions==1 && TripControl::phase()==TripControl::Phase::Waiting);
     assert(sent.flags & TelemetryFlags::initialFixReady);
     assert(!(sent.flags & TelemetryFlags::tripActive));
+    assert(deepSleeps==1); // Ready + ACK sleeps even before application Start.
     cycle(); assert(acquisitions==1); // Ready waits do not re-block on GPS.
     command(1); cycle(); assert(sent.status==0 && (sent.flags & TelemetryFlags::tripActive));
     sos=true; TripControl::raiseAlarm(); cycle();
@@ -168,6 +169,17 @@ int main() {
     try { cycle(); assert(false); } catch(PoweredOff&) {}
     assert(!TripControl::initialFixReady());
     reset(); joined=false; cycle(); assert(slept==AppConfig::retryInitialMs);
+    for (int event=1;event<=2;++event) {
+        reset(); command(1); cycle();
+        sos=event==1; fall=event==2; TripControl::raiseAlarm();
+        response.code=1; response.acknowledged=false;
+        response.downlinkPort=11; response.downlinkLength=1; response.downlink[0]=7;
+        cycle();
+        assert(!sos && !fall && !TripControl::alarmActive());
+        assert(!TripControl::wellbeingPending() && TripControl::phase()==TripControl::Phase::Travelling);
+        response.downlinkLength=0; response.acknowledged=true;
+        cycle(); assert(sent.status==0); // No stale SOS/Fall or synthetic I-am-OK retry.
+    }
     reset(); radioWait=208000; cycle(); assert(slept==208000);
     reset(); infoDue=true; cycle(); assert(infoSends==1 && acquisitions==0);
     reset(); infoDue=true; sos=true; TripControl::raiseAlarm(); cycle();
