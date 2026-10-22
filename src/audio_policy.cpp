@@ -3,11 +3,11 @@
 #include <trip_control.h>
 
 namespace AudioPolicy {
-void transmissionResult(bool acknowledged)
+void transmissionResult(bool successful)
 {
     if (TripControl::phase() != TripControl::Phase::Preparing &&
         !TripControl::alarmActive() && !TripControl::offRoute())
-        AudioFeedback::playAndWait(acknowledged ? AudioFeedback::Event::LoRaConnected
+        AudioFeedback::playAndWait(successful ? AudioFeedback::Event::LoRaConnected
                                                : AudioFeedback::Event::Error);
 }
 

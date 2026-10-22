@@ -22,7 +22,6 @@ constexpr int RADIOLIB_ERR_UNKNOWN=-1, RADIOLIB_ERR_NONE=0;
 namespace AppConfig { constexpr uint8_t uplinkDataRate=2, uplinkPort=2, deviceInfoPort=3; }
 namespace DeviceButton { void servicePowerOff() {} }
 struct { bool responsive=false; } radioHal;
-struct { void beginTrace() {} void dumpTrace() {} } radio;
 struct LoRaWANEvent_t { uint8_t fPort=0; bool confirming=false; };
 struct SerialMock {
     template<class... T> void printf(const char*, T...) {}
@@ -63,9 +62,9 @@ int main() {
                 ready=true; node={}; storage={}; node.code=code; node.ack=ack;
                 Telemetry sample{}; sample.status=status;
                 auto result=send_lora_telemetry(sample);
-                assert(node.confirmed && node.sends==1);
-                assert(result.acknowledged==(code>0 && ack));
-                assert(result.delivered(status)==(code>0 && ack));
+                assert(node.confirmed==(status!=0) && node.sends==1);
+                assert(result.acknowledged==(status!=0 && code>0 && ack));
+                assert(result.delivered(status)==(code>=0 && (status==0 || (code>0 && ack))));
                 assert(result.downlinkLength==(code>0 ? 1u : 0u));
                 assert(storage.saves==1); // Save counters even when ACK is missing.
             }
@@ -84,13 +83,13 @@ int main() {
     send_lora_telemetry(sos); assert(!lora_device_info_due());
     sos.status=4; send_lora_telemetry(sos); assert(lora_device_info_due());
     node.code=0; node.ack=false; send_lora_device_info(sos);
-    assert(node.lastPort==3 && !lora_device_info_due()); // No endless metadata retries.
+    assert(node.lastPort==3 && node.confirmed && !lora_device_info_due()); // Metadata remains confirmed.
 }
 ` .replace('#include <cassert>', '#include <cassert>\n#include <initializer_list>'));
     const binary = path.join(dir, 'test');
     cp.execFileSync('c++', ['-std=c++17', '-DTRACKER_LOG_HOST_TEST', '-DTrackerLog=Serial' , '-DTRACKER_WEB_DEBUG=0', '-I', path.join(root, 'include'), path.join(dir, 'test.cpp'), '-o', binary]);
     cp.execFileSync(binary);
-    console.log('All uplinks confirmed, ACK gating and counter-save tests passed');
+    console.log('Periodic unconfirmed sends, confirmed events, ACK gating and counter-save tests passed');
 } finally {
     fs.rmSync(dir, { recursive: true, force: true });
 }

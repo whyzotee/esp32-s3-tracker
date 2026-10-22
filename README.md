@@ -1,7 +1,8 @@
 # ESP32-S3 LoRaWAN tracker
 
 The radio uses RadioLib 7.8.1 with SX1262, OTAA (Over-The-Air Activation), AS923, Class A,
-confirmed uplinks for every event on port 2. No Heltec activation license or Serial
+unconfirmed periodic position reports (status 0), and confirmed event/preparation
+uplinks on port 2. No Heltec activation license or Serial
 provisioning dialogue is used. All debugging output is sent via Serial Monitor (115200 baud).
 
 Target: [Heltec Wireless Shell V3](https://heltec.org/project/wireless-shell-v3/)
@@ -9,13 +10,15 @@ Target: [Heltec Wireless Shell V3](https://heltec.org/project/wireless-shell-v3/
 The build uses the framework's existing `heltec_wireless_shell_v3` variant;
 custom peripheral wiring stays in `include/board_pins.h`.
 Pin mapping and upload instructions: [docs/HardwareV3.md](docs/HardwareV3.md).
-ADXL362 wiring, thresholds and testing: [docs/ADXL362.md](docs/ADXL362.md).
+ADXL362 wiring: [docs/HardwareV3.md](docs/HardwareV3.md). Current fall-detection
+behavior and verification: [Verification before handoff](#verification-before-handoff).
 Sensor events override debug's normal status with status 2, while debug
 coordinates remain simulated. Audible feedback uses the GPIO4 buzzer in both
 debug and production mode; see [Audible feedback](#audible-feedback).
 
-Application-side ChirpStack MQTT topics and actual test data:
-[docs/RealTest.md](docs/RealTest.md).
+
+Planned TS011 Relay TX migration (not implemented):
+[docs/ts011-tracker-migration-plan.md](docs/ts011-tracker-migration-plan.md).
 
 ## Trip flow and application commands
 
@@ -115,7 +118,7 @@ Start Trip example for the MQTT integration:
 
 Use the same JSON structure for every command, replacing `fPort` and `data`
 according to the table. Here, `confirmed:false` applies to the downlink; firmware
-uplinks are always confirmed. Commands are queued and delivered after a subsequent
+uplinks are confirmed except periodic position reports (status 0). Commands are queued and delivered after a subsequent
 uplink, not immediately during sleep or GPS acquisition. Successful queuing or a
 Gateway TX ACK does not prove the device applied a command; check the next uplink's
 flags. End Trip powers off immediately after reception, so this protocol has no
@@ -124,7 +127,7 @@ Start; the user must turn it on with the button first.
 
 ### Uplink and decoder
 
-FPort **2**, **9-byte** primary payload, always confirmed:
+FPort **2**, **9-byte** primary payload: status 0 is unconfirmed; statuses 1–4 are confirmed:
 
 | Byte offset | Format | Meaning |
 | --- | --- | --- |
@@ -168,10 +171,15 @@ writes and are lost when battery power is removed.
 
 ### QoS, audible alerts and cancellation
 
-- Every uplink requests a LoRaWAN ACK. Once LoRa/GPS are ready, both while
-  awaiting Start and during a trip, each ACK produces the success melody and
+- Periodic position reports during a trip (status 0) do not request a LoRaWAN
+  ACK. A nonnegative send result plays the same success melody as an ACK, but
+  means local send completion only, not network reception. No downlink (`0`)
+  is successful for this report; it resumes the normal report/sleep interval.
+  Radio errors produce the error melody and use the retry interval.
+- Statuses 1–4 and FPort 3 device information still request a LoRaWAN ACK.
+  Once LoRa/GPS are ready, a primary-report ACK produces the success melody and
   a missing ACK produces the error melody, unless an emergency/off-route alarm
-  is active. A missing ACK schedules a retry after
+  is active. A missing primary-report ACK schedules a retry after
   `AppConfig::retryInitialMs` (60 seconds), or a longer radio-required wait.
   Retries are not sent in a tight loop.
 - ACK confirms LoRaWAN network reception through a gateway;
@@ -406,7 +414,8 @@ An unrelated downlink or a nonnegative send result alone does not clear these ev
 Without an ACK, the device waits awake with the working tone for the retry interval (60 seconds),
 or longer if required by LoRaWAN airtime limits, before another send cycle; no
 application-level immediate retry loop is added. RadioLib handles any network-configured
-NbTrans repetitions within its bounded send call. Normal is also confirmed.
+NbTrans repetitions within its bounded send call. Normal position reports are
+unconfirmed; their success sound confirms local completion, not network receipt.
 If fall and SOS are pending together, fall is sent first; the other event remains pending.
 No extra NVS writes are used; pending events can be lost on power loss. ACK confirms
 network reception, not Backend alert creation. Retries can produce duplicate application
@@ -483,9 +492,8 @@ TripControl contains state transitions and consumable feedback snapshots, not
 audio-driver calls. The GPS driver reports `GnssStatus`; the application maps
 qualified fixes and acquisition failures into trip preparation state. LoRa
 remains owned by the main task while GPS acquisition runs on its existing
-dedicated task. Buffered RX tracing is controlled by
-`AppConfig::radioRxTrace` (currently enabled for diagnosis); disabling the
-trace changes logging only, not radio parameters or RX scheduling.
+dedicated task. Radio diagnostics retain join, uplink, downlink and network-ACK
+logs without buffered RX tracing.
 
 ### Refactor verification
 

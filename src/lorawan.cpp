@@ -57,94 +57,22 @@ private:
     }
 };
 ButtonRadioHal radioHal;
-// Fixed-size trace: no allocation, printing or extra radio commands in RX/TX.
-class TracedRadio : public SX1262 {
+// Preserve the RX preamble timeout behavior independently of diagnostics.
+class TrackerRadio : public SX1262 {
 public:
-    explicit TracedRadio(Module *module) : SX1262(module), modPtr(module) {}
-    void beginTrace() { count = 0; dropped = 0; tracing = AppConfig::radioRxTrace; txEnd = 0; }
-    int16_t setFrequency(float value) override {
-        const int16_t rc = SX1262::setFrequency(value);
-        if (rc == RADIOLIB_ERR_NONE) frequency = value;
-        return rc;
-    }
-    int16_t setSpreadingFactor(uint8_t value) override {
-        const int16_t rc = SX1262::setSpreadingFactor(value);
-        if (rc == RADIOLIB_ERR_NONE) sf = value;
-        return rc;
-    }
-    int16_t setBandwidth(float value) override {
-        const int16_t rc = SX1262::setBandwidth(value);
-        if (rc == RADIOLIB_ERR_NONE) bandwidth = value;
-        return rc;
-    }
+    explicit TrackerRadio(Module *module) : SX1262(module), modPtr(module) {}
     int16_t stageMode(RadioModeType_t mode, RadioModeConfig_t *config) override {
-        staged = mode;
         const int16_t rc = SX1262::stageMode(mode, config);
         if (mode == RADIOLIB_RADIO_MODE_RX && modPtr) {
             const uint8_t stopPreamble = RADIOLIB_SX126X_STOP_ON_PREAMBLE_ON;
             modPtr->SPIwriteStream(RADIOLIB_SX126X_CMD_STOP_TIMER_ON_PREAMBLE, &stopPreamble, 1);
         }
-        record("stage", rc);
         return rc;
-    }
-    int16_t launchMode() override {
-        const int16_t rc = SX1262::launchMode();
-        record("launch", rc);
-        return rc;
-    }
-    int16_t finishTransmit() override {
-        const int16_t rc = SX1262::finishTransmit();
-        txEnd = millis();
-        record("TX-end", rc);
-        return rc;
-    }
-    uint32_t getIrqFlags() override {
-        const uint32_t flags = SX1262::getIrqFlags();
-        record("IRQ", flags);
-        return flags;
-    }
-    int16_t readData(uint8_t *data, size_t length) override {
-        const int16_t rc = SX1262::readData(data, length);
-        record("read", rc);
-        return rc;
-    }
-    void dumpTrace() {
-        tracing = false;
-        for (size_t i = 0; i < count; ++i) {
-            const Entry &e = entries[i];
-            TrackerLog.printf("[RX TRACE] t=%lu sinceTXend=%ld %s mode=%u freq=%.3f SF%u BW=%.0f value=%ld\n",
-                static_cast<unsigned long>(e.at), static_cast<long>(e.sinceTx),
-                e.action, unsigned(e.mode), e.freq, e.sf, e.bw, static_cast<long>(e.value));
-        }
-        if (dropped) TrackerLog.printf("[RX TRACE] dropped=%u\n", dropped);
     }
 private:
-    struct Entry {
-        const char *action;
-        uint32_t at;
-        int32_t sinceTx;
-        RadioModeType_t mode;
-        float freq, bw;
-        uint8_t sf;
-        int32_t value;
-    } entries[32];
-    bool tracing = false;
-    size_t count = 0;
-    unsigned dropped = 0;
-    uint32_t txEnd = 0;
-    RadioModeType_t staged{};
-    float frequency = 0, bandwidth = 0;
-    uint8_t sf = 0;
-    void record(const char *action, int32_t value) {
-        if (!tracing) return;
-        if (count == 32) { ++dropped; return; }
-        const uint32_t now = millis();
-        entries[count++] = {action, now, txEnd ? int32_t(now - txEnd) : -1,
-                            staged, frequency, bandwidth, sf, value};
-    }
     Module *modPtr = nullptr;
 };
-TracedRadio radio(new Module(&radioHal, Board::radioCs, Board::radioDio1, Board::radioReset, Board::radioBusy));
+TrackerRadio radio(new Module(&radioHal, Board::radioCs, Board::radioDio1, Board::radioReset, Board::radioBusy));
 // Preserve the deployed channel-0-only configuration (923.2 MHz).
 LoRaWANBand_t loraBand = [] {
     LoRaWANBand_t band = AS923;
@@ -297,12 +225,10 @@ bool setup_lora_wan_app()
             TrackerLog.printf("[LoRa] Join PHY configured: DR%u\n", AppConfig::uplinkDataRate);
         }
 
-        radio.beginTrace();
         radioHal.responsive = true;
         DeviceButton::servicePowerOff();
         state = node.activateOTAA();
         radioHal.responsive = false;
-        radio.dumpTrace();
         DeviceButton::servicePowerOff();
         if (state == RADIOLIB_LORAWAN_NEW_SESSION)
         {
@@ -342,7 +268,7 @@ bool setup_lora_wan_app()
     return ready;
 }
 
-static LoRaResult sendPayload(const uint8_t *payload, size_t length, uint8_t port)
+static LoRaResult sendPayload(const uint8_t *payload, size_t length, uint8_t port, bool confirmed)
 {
     LoRaResult result{};
     result.code = RADIOLIB_ERR_UNKNOWN;
@@ -362,7 +288,6 @@ static LoRaResult sendPayload(const uint8_t *payload, size_t length, uint8_t por
         return result;
     }
 
-    const bool confirmed = true; // Every uplink requests network QoS feedback.
     TrackerLog.printf("[LoRa] TX port=%u bytes=%u FCnt=%lu confirmed=%s DR=%u\n",
                   port, unsigned(length),
                   (unsigned long)LoRaStorage::nextCounter(node),
@@ -372,12 +297,10 @@ static LoRaResult sendPayload(const uint8_t *payload, size_t length, uint8_t por
     result.downlinkLength = sizeof(result.downlink);
     radioHal.responsive = true;
     DeviceButton::servicePowerOff();
-    radio.beginTrace();
     result.code = node.sendReceive(payload, length, port,
                                    result.downlink, &result.downlinkLength, confirmed,
                                    nullptr, &event);
     radioHal.responsive = false;
-    radio.dumpTrace();
     DeviceButton::servicePowerOff();
     result.acknowledged = confirmed && result.code > 0 && event.confirming;
     result.downlinkPort = event.fPort;
@@ -392,6 +315,9 @@ static LoRaResult sendPayload(const uint8_t *payload, size_t length, uint8_t por
     if (confirmed)
         TrackerLog.printf("[LoRa] Uplink ACK: %s\n",
                       result.acknowledged ? "received" : "missing; retry required");
+    else
+        TrackerLog.printf("[LoRa] Unconfirmed send: %s; network ACK not requested\n",
+                      result.code >= 0 ? "completed" : "failed");
     return result;
 }
 
@@ -399,7 +325,8 @@ LoRaResult send_lora_telemetry(const Telemetry &sample)
 {
     uint8_t payload[TELEMETRY_PAYLOAD_SIZE];
     encode_telemetry(sample, payload);
-    const LoRaResult result = sendPayload(payload, sizeof(payload), AppConfig::uplinkPort);
+    const LoRaResult result = sendPayload(payload, sizeof(payload), AppConfig::uplinkPort,
+                                        sample.status != 0);
     if (result.acknowledged && (sample.status == 0 || sample.status == 4))
         primaryTelemetryAcknowledged = true;
     return result;
@@ -417,6 +344,6 @@ LoRaResult send_lora_device_info(const Telemetry &sample)
     deviceInfoAttempted = true;
     uint8_t payload[DEVICE_INFO_PAYLOAD_SIZE];
     encode_device_info(sample, payload);
-    return sendPayload(payload, sizeof(payload), AppConfig::deviceInfoPort);
+    return sendPayload(payload, sizeof(payload), AppConfig::deviceInfoPort, true);
 }
 

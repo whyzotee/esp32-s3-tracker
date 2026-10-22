@@ -13,10 +13,10 @@ struct LoRaResult {
     size_t downlinkLength;
     uint8_t downlink[255];
 
-    // All uplinks are confirmed; an unrelated downlink is not an ACK.
+    // Status 0 succeeds locally after TX/RX completes; receipt is not guaranteed.
+    // Other statuses require a network ACK, not just an unrelated downlink.
     bool delivered(uint8_t status) const {
-        (void)status;
-        return code >= 0 && acknowledged;
+        return code >= 0 && (status == 0 || acknowledged);
     }
 };
 

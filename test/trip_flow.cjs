@@ -40,7 +40,11 @@ namespace AudioFeedback {
 enum class Event { Sos, SosAcknowledged, Fall, LoRaJoining, LoRaConnected, Error };
 inline void startLoop(Event) {}
 inline void stopLoop(Event) {}
-inline void playAndWait(Event) {}
+inline int successSounds=0, errorSounds=0;
+inline void playAndWait(Event event) {
+    if(event==Event::LoRaConnected) ++successSounds;
+    if(event==Event::Error) ++errorSounds;
+}
 inline void play(Event) {}
 }
 `);
@@ -199,6 +203,18 @@ int main() {
     radioWait=0;
     try{cycle();assert(false);}catch(PoweredOff&){}
     assert(!TripControl::initialFixReady()); // End Trip still powers off.
+    reset(); command(1); cycle();
+    response={}; response.code=0; response.sessionSaved=true; // No downlink/ACK.
+    const int successBefore=AudioFeedback::successSounds;
+    const int errorsBefore=AudioFeedback::errorSounds;
+    deepSleeps=0; cycle();
+    assert(sent.status==0 && !response.acknowledged);
+    assert(AudioFeedback::successSounds==successBefore+1 && AudioFeedback::errorSounds==errorsBefore);
+    assert(deepSleeps==1 && slept==AppConfig::reportIntervalMs);
+    assert(!TripControl::keepAwake()); // No artificial retry or awake wait for a missing ACK.
+    response.code=-4; deepSleeps=0; cycle();
+    assert(AudioFeedback::errorSounds==errorsBefore+1);
+    assert(deepSleeps==0 && slept>=AppConfig::retryInitialMs && TripControl::keepAwake());
 }
 `);
     const binary = path.join(dir, 'test');

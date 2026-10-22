@@ -6,8 +6,8 @@ and [USB/power](schematic/JTAG.jpg). The confirmed module is
 not Wireless Stick or a stock WiFi LoRa 32 development board. It has no OLED.
 The installed PlatformIO platform has no separate Shell V3 board manifest, so
 the project retains the `heltec_wifi_lora_32_V3` ESP32-S3/8 MB base profile and
-environment name, with `board_build.variant = heltec_wireless_shell_v3`.
-This selects the existing framework variant, not a local copy. Custom wiring
+environment name. Do not assume a separate `board_build.variant` override is
+configured; inspect the current `platformio.ini`. Custom wiring
 is explicitly assigned in `include/board_pins.h`. Do not enable octal PSRAM:
 GPIO33–37 are used by the custom sensor bus.
 
@@ -115,12 +115,12 @@ Application logs still use native USB by default. For UART0 application logs,
 change `ARDUINO_USB_CDC_ON_BOOT=1` to `0` in `platformio.ini`, rebuild and upload;
 monitor the adapter at 115200 baud. GPS remains on separate UART1.
 
-## LoRaWAN session when replacing the board
+## LoRaWAN identity when replacing the board
 
 Regular uploads on the same board must not erase NVS. **A new board does not
-inherit the old board's saved ABP frame counters.** Before transmitting with
-the new board, provision a new device/session in ChirpStack or coordinate a
-fresh matching ABP session on the server. Do not run both boards with the same
+inherit the old board's OTAA nonce history or RTC session.** Provision a new
+device identity for the new board, or perform an explicitly coordinated identity
+migration that preserves nonce history. Do not run both boards with the same
 active identity and do not permanently disable frame-counter validation.
 Firmware does not automatically reset a corrupt session.
 
@@ -129,12 +129,13 @@ Firmware does not automatically reset a corrupt session.
 Attach the correct LoRa antenna before transmitting. With debug enabled,
 check `[ADXL362] Ready`, plausible acceleration at rest, and simulated uplinks
 with 15-second deep sleeps between normal attempts (plus boot and radio time).
-Check actual reception in ChirpStack; Low Power downlinks select one-hour sleep
-in debug too. Button holds and soft-off follow the README behavior.
+Check actual reception in ChirpStack; Low Power timing and debug overrides follow
+the current README and source. Button holds and soft-off follow the README behavior.
 Then set `LORA_DEBUG = false`, rebuild/upload, and verify outdoor GPS fixes,
 VEXT voltage while awake/asleep, timer wake, S2 wake, and ADXL362 INT1 wake
 with status 2. Use a padded fixture, never a person, for free-fall tests.
-Check buzzer/motor remain off. A successful build is not electrical validation.
+Check the motor remains off and the buzzer follows the README's audio policy,
+including silence after shutdown. A successful build is not electrical validation.
 
 Host regression checks (requires Node.js and a C++ compiler; build first to
 install the pinned RadioLib headers):

@@ -233,9 +233,11 @@ void runCycle()
     const LoRaResult result = send_lora_telemetry(sample);
     DebugWeb::transmission(result.code, result.acknowledged, AppConfig::uplinkPort);
     DebugMode::result(result.code);
-    TripControl::setAcknowledged(result.acknowledged);
+    // For periodic status 0, local send completion is sufficient to resume sleep.
+    // Keep the actual network ACK separate in diagnostics.
+    TripControl::setAcknowledged(result.delivered(sample.status));
     handleDownlink(result);
-    AudioPolicy::transmissionResult(result.acknowledged);
+    AudioPolicy::transmissionResult(result.delivered(sample.status));
     if (result.delivered(sample.status) && TripControl::revision() == sentRevision) {
         if (sample.status == 2) acknowledge_fall_detection();
         if (sample.status == 1) DeviceButton::acknowledgeSos();

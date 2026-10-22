@@ -26,14 +26,12 @@ constexpr uint8_t uplinkPort = 2;
 constexpr uint8_t deviceInfoPort = 3;
 // AS923 BW125: DR0=SF12, DR1=SF11, DR2=SF10.
 constexpr uint8_t uplinkDataRate = 2;
-// Buffered diagnostics only; changing this must not alter radio configuration.
-constexpr bool radioRxTrace = true;
 }
 
 // Update these values for each released firmware build.
 namespace FirmwareVersion {
 constexpr uint8_t major = 1;
-constexpr uint8_t minor = 4;
+constexpr uint8_t minor = 5;
 }
 
 namespace TrackerApp {
